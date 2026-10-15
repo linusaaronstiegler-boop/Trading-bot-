@@ -201,10 +201,10 @@ def lade_vix():
     return None, None, 'fehlt (' + '; '.join(fehler) + ')'
 
 
-def lade_kalender(heute):
+def lade_kalender(heute, aeltestes=None):
     """Handelstage mit Schlusszeit aus GET /v2/calendar (Review 1.11/1.12: keine Feiertagstabelle mehr, Halbtage erkannt).
-    Fallback: NYSE-Regelwerk aus kern (ohne Sonderschließungen) mit Warnung im Log."""
-    von = (heute - dt.timedelta(days=100)).isoformat(); bis = (heute + dt.timedelta(days=60)).isoformat()
+    Reicht bis zum ältesten offenen Leg zurück (Haltetage, BB-Alter). Fallback: NYSE-Regelwerk (ohne Sonderschließungen)."""
+    von = min((heute - dt.timedelta(days=100)).isoformat(), aeltestes or '9999'); bis = (heute + dt.timedelta(days=60)).isoformat()
     try:
         tage = alp(f'/v2/calendar?start={von}&end={bis}')
         if not tage: raise RuntimeError('leere Antwort')
@@ -260,6 +260,16 @@ def csv_anhaengen(pfad, spalten, zeilen):
         w.writerows(zeilen)
 
 
+def journal_anhaengen(zeilen):
+    """Idempotent: eine Zeile (Leg, Ausstiegstag, Stück, Grund) steht höchstens einmal im Journal – auch wenn ein Lauf nach dem
+    Schreiben, aber vor dem Speichern von state.json abbricht und der nächste Lauf dieselben Aufträge noch einmal abrechnet."""
+    schluessel = lambda z: (str(z['id']), str(z['ausstieg_datum']), str(z['stueck']), str(z['grund']))
+    da = {schluessel(z) for z in csv_lesen('journal.csv')}
+    neu = [z for z in zeilen if schluessel(z) not in da]
+    if len(neu) < len(zeilen): log(f'{len(zeilen) - len(neu)} Journalzeile(n) standen schon im Journal – nicht doppelt geschrieben')
+    csv_anhaengen('journal.csv', JOURNAL_SPALTEN, neu)
+
+
 def r2(x, n=4):
     return '' if x is None or x == '' else round(x, n)
 
@@ -289,6 +299,7 @@ def abrechnen(st, heute, kal, schluss):
     Einstieg/Ausstieg je Leg zum tatsächlichen Fill (intern verrechnete Teile zum offiziellen Schluss), Teilfüllungen über filled_qty
     (Review 3.7), abgelehnt/storniert = 0 Stück (Review 3.5: Ausstieg bleibt offen, Einstieg entfällt). → Journalzeilen."""
     zeilen = []; legs = {l['id']: l for l in st['legs']}; rest = []
+    zeilen += stops_abrechnen(st, kal, legs)                                              # zuerst: ein Stop kann vor der MOC gefüllt haben
     fills = fill_aktivitaeten(st, heute)
     for a in st['auftraege']:
         if a['datum'] >= heute: rest.append(a); continue
@@ -307,8 +318,17 @@ def abrechnen(st, heute, kal, schluss):
         s_px = schluss.get(a['symbol'], {}).get(a['datum'])
         preis = p_fill or s_px
         if preis is None: raise Abbruch('FEHLER', f"kein Schlusskurs für {a['symbol']} am {a['datum']} – Abrechnung unmöglich")
-        erledigt = verteile_fill(a['komponenten'], F)
-        for k, d in zip(a['komponenten'], erledigt):
+        komps = []
+        for k in a['komponenten']:                                                       # Ausstieg nie größer als der Restbestand (Stop gefüllt)
+            leg = legs.get(k['leg_id'])
+            komps.append(dict(k, menge=min(k['menge'], leg['stueck']) if leg else 0) if k['art'] == 'aus' else k)
+        erledigt = verteile_fill(komps, F)
+        intern = verteile_fill(komps, 0)                                                # ohne Börse erledigt (Kauf gegen Verkauf im Symbol)
+        for k, d, d0 in zip(komps, erledigt, intern):
+            d0 = min(d0, d); boerse = d - d0
+            # Preis je Komponente: intern Verrechnetes zum offiziellen Schluss, über die Börse Gehandeltes zum Fill
+            preis = ((boerse * p_fill if p_fill else boerse * (s_px or 0)) + d0 * (s_px or p_fill or 0)) / d if d else (p_fill or s_px)
+            fill_k = preis if boerse > 0 and p_fill else None
             leg = legs.get(k['leg_id'])
             if leg is None: log(f"WARNUNG: Leg {k['leg_id']} aus Auftrag {a['symbol']} {a['datum']} fehlt im Zustand"); continue
             if k['art'] == 'ein':
@@ -320,11 +340,11 @@ def abrechnen(st, heute, kal, schluss):
                     st['legs'].remove(leg); legs.pop(leg['id']); log(f"Leg {leg['id']} {leg['strategie']} {leg['symbol']} nicht eröffnet (Order {status})")
                     continue
                 if d < k['menge']: log(f"Teilfüllung Leg {leg['id']} {leg['strategie']} {leg['symbol']}: {d} von {k['menge']}")
-                leg.update(stueck=d, status='offen', einstieg=preis, fill_einstieg=p_fill, schluss_einstieg=s_px)
+                leg.update(stueck=d, status='offen', einstieg=preis, fill_einstieg=fill_k, schluss_einstieg=s_px)
             else:
                 info = leg.pop('ausstieg', None) or {}
                 if d > 0:
-                    zeilen.append(journal_zeile(leg, d, preis, p_fill, s_px, a['datum'], info, kal)); leg['stueck'] -= d
+                    zeilen.append(journal_zeile(leg, d, preis, fill_k, s_px, a['datum'], info, kal)); leg['stueck'] -= d
                 if d < k['menge']:
                     leg['ausstieg_offen'] = dict(grund=info.get('grund', 'Ausstieg'), datum=a['datum'])
                     log(f"Ausstieg offen: Leg {leg['id']} {leg['strategie']} {leg['symbol']} {k['menge'] - d} Stück (Order {status}) – wird nachgeholt")
@@ -332,7 +352,6 @@ def abrechnen(st, heute, kal, schluss):
                 if leg['stueck'] <= 0: st['legs'].remove(leg); legs.pop(leg['id'])
         log(f"Abrechnung {a['symbol']} {a['datum']}: Order {a['menge']:+d} → gefüllt {F:+d} @ {p_fill} (Schluss {s_px}), {status}")
     st['auftraege'] = rest
-    zeilen += stops_abrechnen(st, kal, legs)
     return zeilen
 
 
@@ -371,7 +390,7 @@ def stops_abrechnen(st, kal, legs):
             neu = gef - leg.get('stop_gefuellt', 0); leg['stop_gefuellt'] = gef
             datum = zeit(o['filled_at']).astimezone(NY).date().isoformat() if o.get('filled_at') else st.get('letzter_lauf')
             px = float(o['filled_avg_price'])
-            zeilen.append(journal_zeile(leg, neu, px, px, leg.get('stop'), datum, dict(grund='BB Stop'), kal)); leg['stueck'] -= neu
+            zeilen.append(journal_zeile(leg, neu, px, None, None, datum, dict(grund=f"BB Stop (Stop {leg.get('stop')}, Fill {px})"), kal)); leg['stueck'] -= neu
             log(f"BB-Stop gefüllt {leg['symbol']} {neu} @ {px}")
         if o['status'] in ENDSTATUS:
             if o['status'] != 'filled': log(f"BB-Stop {leg['symbol']} {o['status']} – wird neu gesetzt")
@@ -413,7 +432,7 @@ def equity_nachtragen(st, konto, positionen, kal, heute):
         brutto = sum(abs(p['qty'] * p['vortag']) for p in positionen.values())
         neu.append(dict(datum=vortag, equity=round(float(konto['last_equity']), 2), bargeld=round(float(konto['cash']), 2),
                         brutto=round(brutto, 2), legs=len(st['legs'])))
-    reihe = [float(r['equity']) for r in rows if r.get('equity')]
+    reihe = [float(r['equity']) for r in rows if r.get('equity') and st.get('start') and r['datum'] >= st['start']]   # nur ab Bot-Start (Neustart!)
     for z in neu:
         reihe.append(float(z['equity'])); z['drawdown'] = round(1 - reihe[-1] / max(reihe), 4)
     csv_anhaengen('equity.csv', EQUITY_SPALTEN, neu)
@@ -495,11 +514,11 @@ def moc_senden(sym, menge, cid):
             raise RuntimeError(f'Ausgang unklar: {schwaerzen(e)[:80]}')
 
 
-def stop_setzen(leg, heute, offene=()):
+def stop_setzen(leg, heute, offene=(), menge=None):
     """GTC-Stop 3×ATR für ein BB-Leg (README). Eindeutige client_order_id je Leg; liegt schon ein Stop des Legs bei Alpaca
     (Antwort verloren), wird er übernommen statt verdoppelt (Review v2)."""
     praefix = f"sb-stop-{leg['id']}-"
-    qty = leg['stueck'] - ((leg.get('ausstieg') or {}).get('menge', 0) if (leg.get('ausstieg') or {}).get('gesendet') else 0)
+    qty = menge if menge is not None else leg['stueck'] - ((leg.get('ausstieg') or {}).get('menge', 0) if (leg.get('ausstieg') or {}).get('gesendet') else 0)
     if qty <= 0: return False
     for o in offene:
         if str(o.get('client_order_id', '')).startswith(praefix) and o.get('symbol') == leg['symbol']:
@@ -550,7 +569,16 @@ def senden(st, heute, kz, ausstiege, einstiege, orders, uhr, offene):
             speichern(st)
     finally:
         for leg, steigt_aus in neu_setzen:
-            if leg in st['legs'] and leg.get('einstieg') and not leg.get('stop_order') and not steigt_aus: stop_setzen(leg, heute, offene)
+            if steigt_aus or leg not in st['legs'] or not leg.get('einstieg') or leg.get('stop_order'): continue
+            menge = None
+            aus = leg.get('ausstieg') or {}
+            if aus and not aus.get('gesendet'):                                          # MOC nicht raus: intern Verrechnetes ist trotzdem weg
+                a = next((x for x in auftraege if x['symbol'] == leg['symbol']), None)
+                if a:
+                    erl = sum(d for k, d in zip(a['komponenten'], verteile_fill(a['komponenten'], 0)) if k['art'] == 'aus' and k['leg_id'] == leg['id'])
+                    menge = leg['stueck'] - erl
+                    if menge <= 0: log(f"BB-Stop {leg['symbol']}: Leg intern verrechnet – kein neuer Stop"); continue
+            stop_setzen(leg, heute, offene, menge)
         speichern(st)
     return fehler
 
@@ -692,7 +720,7 @@ def lauf(a):
         status_gestoppt(st); return dict(ende='gestoppt')
 
     # 2) Vorbereitung vor dem Warten (alles, was sich bis zum Schluss nicht mehr ändert)
-    kal = lade_kalender(heute_d)
+    kal = lade_kalender(heute_d, min([l.get('einstieg_datum') or l['datum'] for l in st['legs']], default=None))
     hist = bars(list(ALLE_SYMBOLE), heute_d)
     offen_symbole = {x['symbol'] for x in st['auftraege']} | {l['symbol'] for l in st['legs'] if l.get('stop_order')}
     aelteste = min([x['datum'] for x in st['auftraege']] + [heute])
@@ -700,7 +728,7 @@ def lauf(a):
     zeilen = abrechnen(st, heute, kal, schlusskurse(offen_symbole, heute_d, tage=tage_zurueck) if offen_symbole else {})
     signale_auswerten(st, hist)
     konto = alp('/v2/account'); positionen = positionen_lesen()
-    csv_anhaengen('journal.csv', JOURNAL_SPALTEN, zeilen)
+    journal_anhaengen(zeilen); speichern(st)                                             # Abrechnung sofort sichern (Review v2: doppelte Journalzeilen)
     reihe = equity_nachtragen(st, konto, positionen, kal, heute)
     k5 = kern.abschaltkriterium(reihe)                                               # K5 aus der eigenen Kontokurve seit Start
     if k5['verletzt']: log('ABSCHALTKRITERIUM verletzt: ' + '; '.join(k5['verletzt']))
@@ -784,7 +812,7 @@ def lauf(a):
     for l in st['legs']:
         if l.get('id') in info['datum_neu']: l['datum'] = info['datum_neu'][l['id']]       # Folgesignal: halten, Tag neu zählen
     st['letzter_lauf'] = heute                                                           # vor der ersten Order: Nachläufer handelt nicht doppelt
-    if not stopp: st['aufgeschoben'] = no['aufgeschoben']
+    if not stopp: st['aufgeschoben'] = no['aufgeschoben'] + info.get('aufgeschoben_behalten', [])
     if info['tsmom_tag']: st['letzte_tsmom'] = heute
     st['signale'][heute] = {s: round(kz[s]['ibs'], 4) for s in INDEX + SEKTOREN + LAENDER if s in kz}
     lauf_info['min_senden'] = rest

@@ -69,7 +69,7 @@ def test_halbjahr_live_gegen_attrappe(monkeypatch, tmp_path, von, bis, sperre):
     journal = list(csv.DictReader(open(tmp_path / 'journal.csv')))
     if sperre == 'verkauf': assert any(o['client_order_id'].endswith('-2') for o in b.orders.values()), 'kein Wechsel short → long im Test'
     assert len(journal) > 300 and all(z['ausstieg'] and z['einstieg'] for z in journal)
-    assert all(z['schluss_ausstieg'] for z in journal)                                   # intern Verrechnetes: Preis = offizieller Schluss
+    assert all(z['schluss_ausstieg'] for z in journal if not z['grund'].startswith('BB Stop'))   # Stop-Ausstiege: kein Schluss-Vergleich
     # Gegenprobe mit dem Replay desselben Zeitraums. Die Attrappe kennt keine Dividenden; bewertet der Replay ebenfalls ohne
     # Dividenden (adj := c), müssen beide auf den Dollar gleich sein und dieselben Trades haben (bis auf die Ausstiege des letzten
     # Tages, die der Live-Lauf erst im Folgelauf abrechnet). Das prüft Netting, Vorzeichenwechsel-Sperre, Aufschub, Stops und FIFO.

@@ -165,3 +165,58 @@ def test_bb_stop_nach_moc_kauf_erst_im_naechsten_lauf(monkeypatch, tmp_path):
     assert fehler == [] and b.orders[stop['id']]['status'] == 'canceled'
     assert not [o for o in b.orders.values() if o['type'] == 'stop' and o['status'] == 'accepted']
     assert bb.get('stop_fehlt_seit') == '2025-02-27' and not bb.get('stop_order')
+
+
+def test_kein_verwaister_stop_bei_abgelehnter_moc_und_internem_bb_ausstieg(monkeypatch, tmp_path):
+    import time
+    b, fx = broker(monkeypatch, tmp_path)
+    b.positionen['SPY'] = 30
+    stop = b._order(dict(symbol='SPY', qty='30', side='sell', type='stop', time_in_force='gtc', stop_price='500', client_order_id='sb-stop-1-x-1'))
+    bb = dict(id=1, strategie='BB', symbol='SPY', richtung=1, stueck=30, datum='2025-02-06', einstieg=590.0, status='offen', stop_order=stop['id'], atr20=5)
+    st = json.loads(json.dumps(v2.ZUSTAND_NEU)); st['legs'] = [bb]; st['naechste_id'] = 2
+    ibs = dict(id=None, strategie='IBS', symbol='SPY', richtung=1, stueck=38, datum='2025-02-27', atr20=5)
+    b.ablehnen['SPY'] = 'insufficient buying power'
+    uhr = dict(jetzt=v2.zeit('2025-02-27T19:45:00Z'), schluss=v2.zeit('2025-02-27T20:00:00Z'), mono=time.monotonic())
+    fehler = v2.senden(st, '2025-02-27', {'SPY': dict(px=585.0)}, [(bb, 'BB Tag 15', 30)], [ibs], {'SPY': 8}, uhr,
+                       [dict(id=stop['id'], symbol='SPY', client_order_id='sb-stop-1-x-1')])
+    assert fehler and not [o for o in b.orders.values() if o['type'] == 'stop' and o['status'] == 'accepted']
+
+
+def test_stop_fill_waehrend_des_wartens_kein_geisterleg(monkeypatch, tmp_path):
+    """Stop löst zwischen Vorbereitung (15:28) und Senden (15:45) aus → Folgelauf bucht den Stop, nicht eine interne Verrechnung."""
+    b, fx = broker(monkeypatch, tmp_path); b.positionen['SPY'] = 40
+    bb = dict(id=1, strategie='BB', symbol='SPY', richtung=1, stueck=40, datum='2025-02-06', einstieg_datum='2025-02-06', einstieg=600.0,
+              status='offen', atr20=2.0)
+    st = json.loads(json.dumps(v2.ZUSTAND_NEU)); st.update(legs=[bb], naechste_id=2, start='2025-01-02', startkapital=100000.0, hwm=100000.0,
+                                                          letzte_tsmom='2025-01-31')
+    json.dump(st, open(tmp_path / 'state.json', 'w'))
+    def beim_warten(s):                                                                   # Stop während des Wartens auslösen
+        for o in b.orders.values():
+            if o['type'] == 'stop' and o['status'] == 'accepted': b.stop_ausloesen('SPY', 594.0, '2025-02-27')
+    b.neuer_tag('2025-02-27', uhr='19:30:00'); alt = b.schlafen
+    monkeypatch.setattr(v2.time, 'sleep', lambda s: (beim_warten(s), alt(s)))
+    r, code = lauf()
+    b.schluss('2025-02-27'); b.neuer_tag('2025-02-28')
+    r, code = lauf()
+    st = json.load(open(tmp_path / 'state.json'))
+    assert not [l for l in st['legs'] if l['strategie'] == 'BB']
+    zeilen = [z for z in __import__('csv').DictReader(open(tmp_path / 'journal.csv')) if z['strategie'] == 'BB']
+    assert len(zeilen) == 1 and zeilen[0]['grund'].startswith('BB Stop') and float(zeilen[0]['ausstieg']) == 594.0
+    assert 'ABGLEICH' not in open(tmp_path / 'STATUS.md').read()
+
+
+def test_journal_wird_nicht_doppelt_geschrieben(monkeypatch, tmp_path):
+    b, fx = broker(monkeypatch, tmp_path); b.neuer_tag('2025-02-27')
+    lauf()
+    tag2(b, fx, preise={'IWM': fx['live']['IWM']['hi']}); lauf()
+    b.schluss('2025-02-28'); b.neuer_tag('2025-03-03'); fx['heute'] = '2025-02-28'
+    vorher = open(tmp_path / 'state.json').read()
+    lauf()
+    n1 = len(list(__import__('csv').DictReader(open(tmp_path / 'journal.csv'))))
+    open(tmp_path / 'state.json', 'w').write(vorher)                                      # Absturz nach Journal, vor state.json
+    for o in b.orders.values():
+        if o['client_order_id'].startswith('sb-2025-03-03'): o['client_order_id'] = 'x' + o['client_order_id']   # Wiederanlauf zulassen
+    lauf()
+    zeilen = list(__import__('csv').DictReader(open(tmp_path / 'journal.csv')))
+    keys = [(z['id'], z['ausstieg_datum'], z['stueck'], z['grund']) for z in zeilen]
+    assert len(keys) == len(set(keys)) and len(zeilen) >= n1

@@ -1,6 +1,6 @@
 # Abschluss Systembuch-Bot v2 – Claude-Code-Sitzung 15./16.10.2026
 
-Repo `linusaaronstiegler-boop/Trading-bot-` (= `systembuch-bot`), Branch **`claude/systembuch-v2`**, ein Commit je Aufgabe. **`pytest`: 102 Tests grün**, lokal und auf GitHub (Workflow `tests`).
+Repo `linusaaronstiegler-boop/Trading-bot-` (= `systembuch-bot`), Branch **`claude/systembuch-v2`**, ein Commit je Aufgabe. **`pytest`: 107 Tests grün**, lokal und auf GitHub (Workflow `tests`).
 
 ## Kurz
 
@@ -70,6 +70,7 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 - **Hoch:** Ein Nachläufer mit veraltetem Checkout hätte die MOC-Orders des ersten Laufs storniert und neu gesendet. ✔ Jetzt gilt: Gibt es heutige Bot-Orders bei Alpaca, die `state.json` nicht kennt, endet der Lauf ohne Änderung. Eigene MOC-Orders werden nie storniert, der Checkout holt den aktuellen Stand.
 - **Mittel:** Not-Aus mit abgelehnter Order (✔ Abwicklung bis glatt) · TSMOM nach Abbruch (✔ alle Aufträge vorab gespeichert, Nachholen) · Schlüssel mit Zeilenumbruch landete im Log (✔ geprüft und geschwärzt) · Verbindungsabbruch nach dem Senden (✔ Nachschau per client_order_id) · BB-Stop ohne client_order_id (✔ übernehmen statt verdoppeln).
 - **Niedrig:** BB-Höchstzahl ✔ · Aufschub ohne Kurs ✔ · Not-Aus vor dem Abgleich ✔ · Storno-Ausnahme ✔ · Uhr direkt vor dem POST ✔ · Wartezeit abzüglich Vorbereitung ✔ · Höchststand-Historie nur 1 Monat ✔ · veraltete Snapshot-Kerze ✔.
+- **Mittel/niedrig (Prüfer Regeltreue/Abrechnung/API):** doppelte Journalzeilen nach Abbruch ✔ (idempotent, Zustand direkt nach der Abrechnung gespeichert) · Stop-Fill während des Wartens auf 15:45 ✔ (Stops werden zuerst abgerechnet, Ausstiege auf den Restbestand gekappt) · verwaister Stop nach abgelehnter MOC ✔ · aufgeschobene Teile ohne Kurs gingen live verloren ✔ · Neustart nach Not-Aus übernahm alte equity.csv ✔ (Kurve nur ab Start) · intern verrechnete Teile zum Fill statt zum Schluss gebucht ✔ (Mischpreis je Leg) · Stop-Ausstieg verfälschte die MOC-Abweichung ✔ · Haltetage über 100 Tage falsch ✔ (Kalender reicht bis zum ältesten Leg).
 - **Hoch (Prüfer Abrechnung):** BB-Stop nach MOC-Kauf im Symbol wird von Alpaca abgelehnt (Wash-Trade-Schutz). ✔ teilweise: Der Bot setzt den Stop jetzt bewusst erst im nächsten Lauf neu, statt eine Ablehnung zu provozieren, und der Replay bildet die Lücke ab (Wirkung ≈ 0). Lückenlos nur mit Nachlauf außerhalb des Fensters (offen, siehe oben).
 
 ## Paper-Prüfungen (REVIEW-v1 §8)
