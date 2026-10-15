@@ -195,7 +195,7 @@ def simuliere(D, KZ, i0, i1, param=None, sperre='beide', kosten_bp=3.0, startkap
             leg = dict(l, id=nid, einstieg=px, einstieg_datum=d, i_ein=i, wert=wert, wert_ein=wert, adj=float(A['adj'][i]), kosten=k)
             if l['strategie'] == 'BB': leg['stop'] = round(px - kern.BB_STOP_ATR * l['atr20'], 2)
             nid += 1; cash -= l['richtung'] * wert + k; legs.append(leg)
-        aufgeschoben = no['aufgeschoben']
+        aufgeschoben = no['aufgeschoben'] + info.get('aufgeschoben_behalten', [])
         if info.get('tsmom_tag'): letzte_tsmom = d
         eq_end = cash + sum(l['richtung'] * l['wert'] for l in legs)
         brutto = sum(l['stueck'] * D.a[l['symbol']]['c'][i] for l in legs if np.isfinite(D.a[l['symbol']]['c'][i]))

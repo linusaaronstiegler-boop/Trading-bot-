@@ -21,7 +21,7 @@ Aufruf:  python3 systembuch_bot.py                    echter Lauf (nur im Fenste
 Schlüssel: nur aus APCA_API_KEY_ID / APCA_API_SECRET_KEY (GitHub Secrets). Nie ausgeben, nie speichern.
 Dateien: state.json (Legs, Aufträge), journal.csv (geschlossene Legs), equity.csv (Tageskurve), STATUS.md, log.txt.
 """
-import argparse, csv, datetime as dt, json, os, sys, tempfile, time, urllib.error, urllib.parse, urllib.request
+import argparse, csv, datetime as dt, http.client, json, os, sys, tempfile, time, urllib.error, urllib.parse, urllib.request
 from zoneinfo import ZoneInfo
 
 import kern
@@ -61,7 +61,23 @@ VIX_ALARM_LAEUFE = 3         # Review §8: Alarm, wenn drei Läufe in Folge ohne
 
 
 # ---------- Infrastruktur ----------
+def geheimnisse():
+    out = set()
+    for n in ('APCA_API_KEY_ID', 'APCA_API_SECRET_KEY'):
+        v = os.environ.get(n) or ''
+        out |= {v, v.strip()}
+    return [g for g in out if len(g) >= 6]
+
+
+def schwaerzen(text):
+    """Schlüsselwerte nie ausgeben – auch nicht in Fehlermeldungen fremder Bibliotheken (Review v2: Header-ValueError)."""
+    text = str(text)
+    for g in geheimnisse(): text = text.replace(g, '***')
+    return text
+
+
 def log(msg):
+    msg = schwaerzen(msg)
     line = f"{dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} {msg}"
     print(line); LOGZEILEN.append(line)
     if msg.startswith('WARNUNG'): WARNUNGEN.append(msg[9:])
@@ -70,9 +86,14 @@ def log(msg):
 
 
 def hdr():
-    k, s = os.environ.get('APCA_API_KEY_ID'), os.environ.get('APCA_API_SECRET_KEY')
+    k, s = (os.environ.get('APCA_API_KEY_ID') or '').strip(), (os.environ.get('APCA_API_SECRET_KEY') or '').strip()
     if not (k and s): raise Abbruch('FEHLER', 'Alpaca-Schlüssel fehlen (APCA_API_KEY_ID / APCA_API_SECRET_KEY)')
+    if not all(33 <= ord(c) <= 126 for c in k + s): raise Abbruch('FEHLER', 'Alpaca-Schlüssel enthält Leer- oder Sonderzeichen – Secret neu eintragen')
     return {'APCA-API-KEY-ID': k, 'APCA-API-SECRET-KEY': s, 'Content-Type': 'application/json'}
+
+
+class Abgelehnt(RuntimeError):
+    """Alpaca hat fachlich abgelehnt (4xx außer 404/429) – die Order existiert sicher nicht."""
 
 
 def alp(path, body=None, method=None, base=PAPER, tries=5):
@@ -85,10 +106,11 @@ def alp(path, body=None, method=None, base=PAPER, tries=5):
         except urllib.error.HTTPError as e:
             txt = e.read()[:300].decode(errors='ignore')
             if e.code in (429, 500, 502, 503, 504) and i < tries - 1: time.sleep(2 + 2 * i); continue
-            raise RuntimeError(f'Alpaca {e.code} {path.split("?")[0]}: {txt}')
-        except (urllib.error.URLError, TimeoutError) as e:
+            fehler = Abgelehnt if 400 <= e.code < 500 and e.code not in (404, 408, 429) else RuntimeError
+            raise fehler(f'Alpaca {e.code} {path.split("?")[0]}: {txt}')
+        except (urllib.error.URLError, TimeoutError, http.client.HTTPException, OSError) as e:      # auch Verbindungsabbruch nach dem Senden
             if i < tries - 1: time.sleep(2 + 2 * i); continue
-            raise RuntimeError(f'Alpaca nicht erreichbar ({path.split("?")[0]}): {e}')
+            raise RuntimeError(f'Alpaca nicht erreichbar ({path.split("?")[0]}): {type(e).__name__} {schwaerzen(e)[:120]}')
 
 
 def bars(symbols, heute, tage=420, adjustment='all'):
@@ -257,7 +279,7 @@ def abrechnen(st, heute, kal, schluss):
     for a in st['auftraege']:
         if a['datum'] >= heute: rest.append(a); continue
         F, p_fill, status = 0, None, a['status']
-        if status in ('vorbereitet', 'gesendet'):
+        if a.get('client_order_id'):                                                    # auch 'abgelehnt': nachsehen, ob doch angekommen
             o = order_lesen(a)
             if o is not None:
                 if o['status'] not in ENDSTATUS: raise Abbruch('ABGLEICH NÖTIG', f"MOC {a['symbol']} vom {a['datum']} noch nicht abgeschlossen ({o['status']})")
@@ -275,6 +297,10 @@ def abrechnen(st, heute, kal, schluss):
             leg = legs.get(k['leg_id'])
             if leg is None: log(f"WARNUNG: Leg {k['leg_id']} aus Auftrag {a['symbol']} {a['datum']} fehlt im Zustand"); continue
             if k['art'] == 'ein':
+                if d < k['menge'] and leg['strategie'] in kern.MEHRTAGIG and not st.get('gestoppt'):   # Rest mehrtägiger Strategien nachholen
+                    st['aufgeschoben'].append(dict(strategie=leg['strategie'], symbol=leg['symbol'], richtung=leg['richtung'], stueck=k['menge'] - d,
+                                                   datum=leg['datum'], atr20=leg.get('atr20'), grund=f'Order {status}'))
+                    log(f"{leg['strategie']} {leg['symbol']}: {k['menge'] - d} Stück nicht ausgeführt – im nächsten Lauf nachholen")
                 if d == 0:
                     st['legs'].remove(leg); legs.pop(leg['id']); log(f"Leg {leg['id']} {leg['strategie']} {leg['symbol']} nicht eröffnet (Order {status})")
                     continue
@@ -419,18 +445,22 @@ def minuten_bis_schluss_jetzt(uhr):
     return (uhr['schluss'] - uhr['jetzt']).total_seconds() / 60 - (time.monotonic() - uhr['mono']) / 60
 
 
-def stornieren(sym, offene, nicht=()):
-    """Alle offenen Orders im Symbol stornieren und auf `canceled` warten (Review 1.8/1.9). → (ok, stornierte Orders)."""
+def stornieren(sym, offene, nur=None):
+    """Offene Orders im Symbol stornieren und auf `canceled` warten (Review 1.8/1.9). Eigene MOC-Orders (sb-…) nie.
+    nur: Menge von Order-IDs, auf die sich der Storno beschränkt. → (ok, stornierte Orders)."""
     weg = []
-    for o in [o for o in offene if o['symbol'] == sym and o['id'] not in nicht]:
-        try: alp(f"/v2/orders/{o['id']}", method='DELETE')
-        except Exception as e: log(f"Storno {sym} {o['id']} fehlgeschlagen: {str(e)[:100]}"); return False, weg
-        ende = time.monotonic() + STORNO_WARTEN_S
-        while True:
-            z = alp(f"/v2/orders/{o['id']}")
-            if z['status'] in ENDSTATUS: break
-            if time.monotonic() > ende: log(f'Storno {sym} nicht bestätigt ({z["status"]}) – Symbol heute ausgelassen'); return False, weg
-            time.sleep(0.5)
+    for o in [o for o in offene if o['symbol'] == sym and (nur is None or o['id'] in nur)]:
+        if o.get('time_in_force') == 'cls' or str(o.get('client_order_id', '')).startswith('sb-2'): continue
+        try:
+            alp(f"/v2/orders/{o['id']}", method='DELETE')
+            ende = time.monotonic() + STORNO_WARTEN_S
+            while True:
+                z = alp(f"/v2/orders/{o['id']}", tries=2)
+                if z['status'] in ENDSTATUS: break
+                if time.monotonic() > ende: log(f'Storno {sym} nicht bestätigt ({z["status"]}) – Symbol heute ausgelassen'); return False, weg
+                time.sleep(0.5)
+        except Exception as e:
+            log(f"Storno {sym} {o['id']} fehlgeschlagen: {schwaerzen(e)[:100]}"); return False, weg
         if z['status'] == 'filled' or float(z.get('filled_qty') or 0) > 0:
             log(f'{sym}: Order {o["id"]} wurde gerade gefüllt – Bestand geändert, Symbol heute ausgelassen'); return False, weg
         weg.append(o); offene.remove(o)
@@ -438,79 +468,115 @@ def stornieren(sym, offene, nicht=()):
 
 
 def moc_senden(sym, menge, cid):
-    """Eine MOC-Order. Kein blindes Wiederholen (Doppelorder!): bei Netzfehler per client_order_id nachsehen."""
+    """Eine MOC-Order. Kein blindes Wiederholen (Doppelorder!). Fachliche Ablehnung → Abgelehnt. Jeder andere Fehler
+    (Zeitüberschreitung, Verbindungsabbruch, 5xx) heißt „Ausgang unklar“ → per client_order_id nachsehen."""
     body = dict(symbol=sym, qty=str(abs(menge)), side='buy' if menge > 0 else 'sell', type='market', time_in_force='cls', client_order_id=cid)
     try: return alp('/v2/orders', body, 'POST', tries=1)
-    except RuntimeError as e:
-        if 'Alpaca 4' in str(e) and 'Alpaca 429' not in str(e): raise                  # fachlich abgelehnt (403/422 …)
-        try: return alp(f'/v2/orders:by_client_order_id?client_order_id={urllib.parse.quote(cid)}')
-        except Exception: raise e
+    except Abgelehnt: raise
+    except Exception as e:
+        try: return alp(f'/v2/orders:by_client_order_id?client_order_id={urllib.parse.quote(cid)}', tries=3)
+        except RuntimeError as e2:
+            if 'Alpaca 404' in str(e2): raise Abgelehnt(f'nicht angekommen ({schwaerzen(e)[:80]})')
+            raise RuntimeError(f'Ausgang unklar: {schwaerzen(e)[:80]}')
 
 
-def stop_setzen(leg):
+def stop_setzen(leg, heute, offene=()):
+    """GTC-Stop 3×ATR für ein BB-Leg (README). Eindeutige client_order_id je Leg; liegt schon ein Stop des Legs bei Alpaca
+    (Antwort verloren), wird er übernommen statt verdoppelt (Review v2)."""
+    praefix = f"sb-stop-{leg['id']}-"
+    qty = leg['stueck'] - ((leg.get('ausstieg') or {}).get('menge', 0) if (leg.get('ausstieg') or {}).get('gesendet') else 0)
+    if qty <= 0: return False
+    for o in offene:
+        if str(o.get('client_order_id', '')).startswith(praefix) and o.get('symbol') == leg['symbol']:
+            leg['stop_order'] = o['id']; log(f"BB-Stop {leg['symbol']} bereits vorhanden – übernommen"); return True
     stop = round(leg['einstieg'] - kern.BB_STOP_ATR * leg['atr20'], 2)
+    leg['stop_n'] = leg.get('stop_n', 0) + 1; cid = f"{praefix}{heute}-{leg['stop_n']}"
+    body = dict(symbol=leg['symbol'], qty=str(qty), side='sell', type='stop', stop_price=f'{stop:.2f}', time_in_force='gtc', client_order_id=cid)
     try:
-        o = alp('/v2/orders', dict(symbol=leg['symbol'], qty=str(leg['stueck']), side='sell', type='stop', stop_price=f'{stop:.2f}', time_in_force='gtc'), 'POST', tries=1)
-        leg['stop_order'] = o['id']; leg['stop'] = stop; leg.pop('stop_gefuellt', None); log(f"BB-Stop {leg['symbol']} {leg['stueck']} @ {stop}")
+        try: o = alp('/v2/orders', body, 'POST', tries=1)
+        except Abgelehnt: raise
+        except Exception: o = alp(f'/v2/orders:by_client_order_id?client_order_id={urllib.parse.quote(cid)}', tries=3)
+        leg['stop_order'] = o['id']; leg['stop'] = stop; leg.pop('stop_gefuellt', None); log(f"BB-Stop {leg['symbol']} {qty} @ {stop}")
         return True
     except Exception as e:
-        log(f"WARNUNG: BB-Stop {leg['symbol']} nicht gesetzt ({str(e)[:120]}) – nächster Lauf versucht es erneut"); return False
+        log(f"WARNUNG: BB-Stop {leg['symbol']} nicht gesetzt ({schwaerzen(e)[:120]}) – nächster Lauf versucht es erneut"); return False
 
 
 def senden(st, heute, kz, ausstiege, einstiege, orders, uhr, offene):
-    """Je Symbol: Auftrag vorbereiten + Zustand speichern → offene Orders stornieren → MOC senden → Zustand speichern.
-    → Liste Fehlertexte (abgelehnte/ausgelassene Symbole)."""
-    fehler = []; nr = 0; symbole = []
+    """1. Alle Aufträge vorbereiten und in einem Schritt speichern (bricht der Lauf ab, findet der Folgelauf jeden als
+       'vorbereitet' und sieht per client_order_id nach – Review 5.2). 2. Je Symbol: offene Stops stornieren → Uhr prüfen →
+       MOC senden → speichern. 3. Stornierte Stops bleibender BB-Legs neu setzen (immer, auch nach Fehlern).
+    → Liste Fehlertexte."""
+    fehler = []; nr = 0; symbole = []; auftraege = []
     for x in [a[0] for a in ausstiege] + einstiege:
         if x['symbol'] not in symbole: symbole.append(x['symbol'])
-    gestoppt_neu = []                                                                    # BB-Legs, deren Stop für die MOC storniert wurde
     for s in symbole:
-        m = minuten_bis_schluss_jetzt(uhr)
-        if not (ORDER_SPAETESTENS_MIN <= m <= ORDER_FRUEHESTENS_MIN):
-            fehler.append(f'ORDER NICHT GESENDET {s}: {m:.1f} Min bis Schluss (erlaubt {ORDER_SPAETESTENS_MIN}–{ORDER_FRUEHESTENS_MIN})'); continue
-        aus_s = [a for a in ausstiege if a[0]['symbol'] == s]; ein_s = [l for l in einstiege if l['symbol'] == s]
-        d = orders.get(s, 0); cid = f'sb-{heute}-{s}'
-        komps = []
-        for leg, grund, menge in aus_s:
+        d = orders.get(s, 0); cid = f'sb-{heute}-{s}'; komps = []
+        for leg, grund, menge in [a for a in ausstiege if a[0]['symbol'] == s]:
             komps.append(dict(art='aus', leg_id=leg['id'], menge=menge, seite=-leg['richtung'], strategie=leg['strategie']))
             leg['ausstieg'] = dict(grund=grund, datum=heute, menge=menge, kurs_entscheidung=kz.get(s, {}).get('px'), auftrag=cid)
-        for leg in ein_s:
+        for leg in [l for l in einstiege if l['symbol'] == s]:
             leg.update(id=st['naechste_id'], status='pending', einstieg_datum=heute, kurs_entscheidung=kz[s]['px']); st['naechste_id'] += 1
             komps.append(dict(art='ein', leg_id=leg['id'], menge=leg['stueck'], seite=leg['richtung'], strategie=leg['strategie'], nr=nr)); nr += 1
             st['legs'].append(leg)
-        a = dict(datum=heute, symbol=s, menge=d, client_order_id=cid if d else None, order_id=None, status='vorbereitet' if d else 'intern', komponenten=komps)
-        st['auftraege'].append(a); speichern(st)
-        aus_ids = {l['id'] for l, _, _ in aus_s}
-        if d == 0:
-            log(f'{s}: Wechsel innerhalb des Symbols, keine Order (intern zum Schluss verrechnet)')
-            stops = {l['stop_order'] for l, _, _ in aus_s if l.get('stop_order')}           # Stop eines intern geschlossenen BB-Legs muss weg
-            if stops:
-                ok, weg = stornieren(s, [o for o in offene if o['id'] in stops])
-                for o in weg: offene[:] = [x for x in offene if x['id'] != o['id']]
-                for leg, _, _ in aus_s:
-                    if leg.get('stop_order') in {o['id'] for o in weg}: leg.pop('stop_order', None)
-                if not ok: fehler.append(f'STOP NICHT STORNIERT {s}: Stop des geschlossenen BB-Legs bleibt aktiv – bitte von Hand stornieren')
-                speichern(st)
-            continue
-        ok, weg = stornieren(s, offene)
-        for o in weg:
-            for leg in st['legs']:
-                if leg.get('stop_order') == o['id']:
-                    leg.pop('stop_order', None)
-                    if leg['id'] not in aus_ids: gestoppt_neu.append(leg)
-        if not ok:
-            a['status'] = 'abgelehnt'; a['grund'] = 'offene Order im Symbol nicht stornierbar'; speichern(st)
-            fehler.append(f'ORDER NICHT GESENDET {s}: offene Order nicht stornierbar – heute keine MOC'); continue
-        try:
-            o = moc_senden(s, d, cid); a.update(order_id=o['id'], status='gesendet')
-            log(f"MOC {'buy' if d > 0 else 'sell'} {abs(d)} {s} → {o['id']} ({minuten_bis_schluss_jetzt(uhr):.1f} Min vor Schluss)")
-        except Exception as e:
-            a.update(status='abgelehnt', grund=str(e)[:200]); fehler.append(f'ORDER ABGELEHNT {s} {d:+d}: {str(e)[:160]}'); log(f'Order {s} {d:+d} ABGELEHNT: {str(e)[:160]}')
+        auftraege.append(dict(datum=heute, symbol=s, menge=d, client_order_id=cid if d else None, order_id=None,
+                              status='vorbereitet' if d else 'intern', komponenten=komps))
+    st['auftraege'] += auftraege; speichern(st)
+    neu_setzen = []                                                                      # (Leg, steigt heute aus) mit storniertem Stop
+    try:
+        for a in auftraege:
+            try: fehler += auftrag_senden(st, a, uhr, offene, neu_setzen)
+            except Exception as e:
+                a['grund'] = f'Ausgang unklar: {schwaerzen(e)[:150]}'                      # Status bleibt 'vorbereitet' → Folgelauf sieht nach
+                fehler.append(f"ORDER UNKLAR {a['symbol']} {a['menge']:+d}: {schwaerzen(e)[:120]}"); log(f"Order {a['symbol']} Ausgang unklar: {schwaerzen(e)[:160]}")
+            speichern(st)
+    finally:
+        for leg, steigt_aus in neu_setzen:
+            if leg in st['legs'] and leg.get('einstieg') and not leg.get('stop_order') and not steigt_aus: stop_setzen(leg, heute, offene)
         speichern(st)
-    for leg in gestoppt_neu:                                                             # Stops der bleibenden BB-Legs wieder setzen
-        if leg in st['legs'] and leg.get('einstieg'): stop_setzen(leg)
-    speichern(st)
     return fehler
+
+
+def auftrag_senden(st, a, uhr, offene, neu_setzen):
+    s, d = a['symbol'], a['menge']
+    legs = {l['id']: l for l in st['legs']}
+    aus_legs = [legs[k['leg_id']] for k in a['komponenten'] if k['art'] == 'aus' and k['leg_id'] in legs]
+    if d == 0:
+        log(f'{s}: Wechsel innerhalb des Symbols, keine Order (intern zum Schluss verrechnet)')
+        stops = {l['stop_order'] for l in aus_legs if l.get('stop_order')}                # Stop eines intern geschlossenen BB-Legs muss weg
+        if not stops: return []
+        ok, weg = stornieren(s, offene, nur=stops)
+        for l in aus_legs:
+            if l.get('stop_order') in {o['id'] for o in weg}: l.pop('stop_order', None)
+        return [] if ok else [f'STOP NICHT STORNIERT {s}: Stop des geschlossenen BB-Legs bleibt aktiv – bitte von Hand stornieren']
+    m = minuten_bis_schluss_jetzt(uhr)
+    if not (ORDER_SPAETESTENS_MIN <= m <= ORDER_FRUEHESTENS_MIN):
+        a.update(status='abgelehnt', grund=f'nicht gesendet, {m:.1f} Min bis Schluss')
+        return [f'ORDER NICHT GESENDET {s}: {m:.1f} Min bis Schluss (erlaubt {ORDER_SPAETESTENS_MIN}–{ORDER_FRUEHESTENS_MIN})']
+    ok, weg = stornieren(s, offene)
+    aus_ids = {l['id'] for l in aus_legs}
+    for o in weg:
+        for leg in st['legs']:
+            if leg.get('stop_order') == o['id']: leg.pop('stop_order', None); neu_setzen.append((leg, False))
+    if not ok:
+        a.update(status='abgelehnt', grund='offene Order im Symbol nicht stornierbar')
+        return [f'ORDER NICHT GESENDET {s}: offene Order nicht stornierbar – heute keine MOC']
+    m = minuten_bis_schluss_jetzt(uhr)                                                    # direkt vor dem POST noch einmal (Storno kann dauern)
+    if not (ORDER_SPAETESTENS_MIN <= m <= ORDER_FRUEHESTENS_MIN):
+        a.update(status='abgelehnt', grund=f'nicht gesendet, {m:.1f} Min bis Schluss')
+        return [f'ORDER NICHT GESENDET {s}: {m:.1f} Min bis Schluss nach Storno']
+    try:
+        o = moc_senden(s, d, a['client_order_id'])
+    except Abgelehnt as e:
+        a.update(status='abgelehnt', grund=schwaerzen(e)[:200]); log(f'Order {s} {d:+d} ABGELEHNT: {schwaerzen(e)[:160]}')
+        return [f'ORDER ABGELEHNT {s} {d:+d}: {schwaerzen(e)[:160]}']
+    a.update(order_id=o['id'], status='gesendet')
+    for i, (leg, _) in enumerate(neu_setzen):                                              # aussteigende Legs bekommen keinen Stop zurück
+        if leg['id'] in aus_ids and leg.get('ausstieg', {}).get('menge', 0) >= leg['stueck']: neu_setzen[i] = (leg, True)
+    for leg in aus_legs:
+        if leg.get('ausstieg'): leg['ausstieg']['gesendet'] = True
+    log(f"MOC {'buy' if d > 0 else 'sell'} {abs(d)} {s} → {o['id']} ({minuten_bis_schluss_jetzt(uhr):.1f} Min vor Schluss)")
+    return []
 
 
 # ---------- Hauptlauf ----------
@@ -545,6 +611,31 @@ def main(argv=None):
         status_fehler('FEHLER', f'{type(e).__name__}: {str(e)[:300]}'); sys.exit(1)
 
 
+def heutige_bot_orders(heute_d):
+    """MOC-Orders des Bots von heute bei Alpaca (client_order_id sb-JJJJ-MM-TT-…)."""
+    ab = dt.datetime.combine(heute_d, dt.time(0, 0), NY).astimezone(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return [o for o in alp(f'/v2/orders?status=all&after={ab}&limit=500&direction=desc') or []
+            if str(o.get('client_order_id', '')).startswith(f'sb-{heute_d.isoformat()}-')]
+
+
+def stopp_grund(st, eq, k5):
+    """Bereits gestoppt (Abwicklung läuft), Not-Aus oder Abschaltkriterium K5 → Text, sonst None."""
+    if st.get('gestoppt'): return st.get('stopp_grund') or 'GESTOPPT'
+    if kern.notaus(eq, st.get('startkapital')): return f'NOT-AUS: Equity {eq:,.0f} $ < 70 % des Startkapitals {st["startkapital"]:,.0f} $'
+    if k5['verletzt']: return 'ABSCHALTKRITERIUM AUSGELÖST: ' + '; '.join(k5['verletzt'])
+    return None
+
+
+def abwicklungs_legs(st, differenz, heute):
+    """Beim Glattstellen trotz Abweichung: Differenz je Symbol als Leg 'ABWICKLUNG' buchen, damit Σ Legs = Alpaca-Position
+    und die Glattstell-Order genau die Alpaca-Position schließt."""
+    for s, (soll, ist) in differenz.items():
+        d = ist - soll
+        st['legs'].append(dict(id=st['naechste_id'], strategie='ABWICKLUNG', symbol=s, richtung=1 if d > 0 else -1, stueck=abs(d), datum=heute,
+                               einstieg_datum=heute, einstieg=None, status='offen', atr20=0.0))
+        st['naechste_id'] += 1
+
+
 def lauf(a):
     st = laden()
     clock = alp('/v2/clock'); jetzt = zeit(clock['timestamp']); heute_d = jetzt.astimezone(NY).date(); heute = heute_d.isoformat()
@@ -555,7 +646,12 @@ def lauf(a):
         log(f'--force: außerhalb des Fensters ({min_bis_schluss:.1f} Min bis Schluss)')
     if st.get('letzter_lauf') == heute and not a.force:
         log('heute schon gelaufen – Ende'); return dict(ende='schon gelaufen')
-    if st.get('gestoppt'):
+    t_start = time.monotonic()
+    if not a.dry and heutige_bot_orders(heute_d):
+        # Bot-Orders von heute bei Alpaca, aber state.json kennt sie nicht → veralteter Stand (z. B. Nachläufer mit altem Checkout).
+        # Nichts stornieren, nichts senden, keine Datei schreiben (Review v2, Befund „Nachläufer“).
+        print('heute schon gehandelt (Bot-Orders bei Alpaca), state.json veraltet – Ende ohne Änderung'); return dict(ende='schon gehandelt')
+    if st.get('gestoppt') and not st['legs'] and not st['auftraege'] and not positionen_lesen():
         log(f"GESTOPPT ({st.get('stopp_grund')}) – kein Handel, bis eine Sitzung mit Linus entscheidet (state.json: gestoppt=false)")
         status_gestoppt(st); return dict(ende='gestoppt')
 
@@ -572,24 +668,33 @@ def lauf(a):
     reihe = equity_nachtragen(st, konto, positionen, kal, heute)
     k5 = kern.abschaltkriterium(reihe)                                               # K5 aus der eigenen Kontokurve seit Start
     if k5['verletzt']: log('ABSCHALTKRITERIUM verletzt: ' + '; '.join(k5['verletzt']))
+    # Not-Aus/K5/Stopp vor dem Abgleich bewerten: ein Abgleichfehler darf das Glattstellen nicht verhindern (Review v2)
+    stopp = stopp_grund(st, float(konto['equity']), k5)
     differenz = abgleich(st['legs'], positionen)
     if differenz:
         text = 'Legs ≠ Alpaca-Positionen: ' + ', '.join(f'{s} Legs {a_} / Alpaca {b_}' for s, (a_, b_) in differenz.items())
-        if not a.dry: speichern(st); raise Abbruch('ABGLEICH NÖTIG', text + ' – kein Handel, bitte prüfen')
-        log(f'ABGLEICH NÖTIG (dry: rechne trotzdem weiter): {text}')
+        if stopp and not a.dry:
+            abwicklungs_legs(st, differenz, heute); log(f'WARNUNG: {text} – {stopp.split(":")[0]}: es werden die Alpaca-Positionen glattgestellt')
+        elif not a.dry: speichern(st); raise Abbruch('ABGLEICH NÖTIG', text + ' – kein Handel, bitte prüfen')
+        else: log(f'ABGLEICH NÖTIG (dry: rechne trotzdem weiter): {text}')
+    if st.get('gestoppt') and not st['legs']:                                          # Abwicklung abgeschlossen: alles glatt
+        speichern(st); csv_anhaengen('journal.csv', JOURNAL_SPALTEN, [])
+        log(f"GESTOPPT ({st.get('stopp_grund')}) – alle Positionen glatt, kein Handel bis zur Sitzung mit Linus")
+        status_gestoppt(st); return dict(ende='gestoppt')
     leihbar = {}
     for s in TSMOM:
         try: leihbar[s] = bool(alp(f'/v2/assets/{s}').get('shortable', False))
         except Exception: leihbar[s] = False
     offene = [o for o in alp('/v2/orders?status=open&limit=500') or []] if not a.dry else []
     for leg in st['legs']:                                                               # Stops für BB-Legs mit bekanntem Einstieg
-        if leg['strategie'] == 'BB' and leg.get('einstieg') and leg.get('status') == 'offen' and not leg.get('stop_order') and not a.dry:
-            if stop_setzen(leg): offene.append(dict(id=leg['stop_order'], symbol=leg['symbol']))
+        if leg['strategie'] == 'BB' and leg.get('einstieg') and leg.get('status') == 'offen' and not leg.get('stop_order') and not a.dry and not stopp:
+            if stop_setzen(leg, heute, offene) and leg['stop_order'] not in {o['id'] for o in offene}:
+                offene.append(dict(id=leg['stop_order'], symbol=leg['symbol'], client_order_id=f"sb-stop-{leg['id']}-", time_in_force='gtc'))
     speichern(st)
 
     # 3) K6: bis ENTSCHEIDUNG_MIN vor Schluss warten, erst dann Kurse laden (Signal so nah am Schluss wie Alpaca erlaubt)
-    if clock['is_open'] and min_bis_schluss > ENTSCHEIDUNG_MIN and not a.force:
-        warte = (min_bis_schluss - ENTSCHEIDUNG_MIN) * 60
+    warte = (min_bis_schluss - ENTSCHEIDUNG_MIN) * 60 - (time.monotonic() - t_start)         # Vorbereitung abziehen (Review v2)
+    if clock['is_open'] and warte > 0 and not a.force:
         log(f'warte {warte / 60:.1f} Min bis {ENTSCHEIDUNG_MIN:.0f} Min vor Schluss (K6-Fenster)'); time.sleep(warte)
     clock = alp('/v2/clock'); uhr = dict(jetzt=zeit(clock['timestamp']), schluss=naechster_schluss, mono=time.monotonic())
     entscheidung_zeit = uhr['jetzt'].astimezone(NY).strftime('%H:%M:%S')
@@ -615,12 +720,11 @@ def lauf(a):
     log(f'Signale: MW-Kauf {info["mw_kauf"]}, MW-Verkauf {info["mw_verkauf"]}, TSMOM {info["tsmom_tag"]}, VIX3M/VIX {ratio and round(ratio, 3)} ({vix_quelle})')
 
     # Not-Aus und Abschaltkriterium K5: alles per MOC glatt (Regel 4: nur MOC im Fenster, kein DELETE /v2/positions), Bot stoppt
-    stopp = None
-    if kern.notaus(eq, st['startkapital']): stopp = f'NOT-AUS: Equity {eq:,.0f} $ < 70 % des Startkapitals {st["startkapital"]:,.0f} $'
-    elif k5['verletzt']: stopp = 'ABSCHALTKRITERIUM AUSGELÖST: ' + '; '.join(k5['verletzt'])
+    stopp = stopp or stopp_grund(st, eq, k5)
     if stopp:
         log(f'{stopp} – alle Legs per MOC glatt, Bot stoppt, kein automatischer Neustart')
-        schliessen = [(l, stopp.split(':')[0]) for l in st['legs']]; neu = []; st.update(gestoppt=True, stopp_grund=stopp, aufgeschoben=[])
+        schliessen = [(l, stopp.split(':')[0]) for l in st['legs']]; neu = []
+        st.update(gestoppt=True, stopp_grund=st.get('stopp_grund') or stopp, aufgeschoben=[])
     roh = netto_plan(schliessen, neu)
     no = netto_orders(st['legs'], schliessen, neu)                                     # Review 3.2: nie durch null in einem Tag
     plan = no['orders']
@@ -656,7 +760,7 @@ def lauf(a):
     speichern(st)
     ergebnis['fehler'] = fehler
     status_md(st, eq, dd, kz, ratio, plan, no['ausstiege'], [], heute, kal, lauf_info, k5, fehler=fehler, titel=stopp)
-    if stopp: raise Abbruch(stopp.split(':')[0], stopp, status_steht=True)
+    if stopp: raise Abbruch(stopp.split(':')[0] if stopp.split(':')[0] != 'GESTOPPT' else 'GESTOPPT – ABWICKLUNG', stopp, status_steht=True)
     if fehler: raise Abbruch('ORDER ABGELEHNT' if any('VIX' not in f for f in fehler) else 'VIX FEHLT', '; '.join(fehler), status_steht=True)
     return ergebnis
 

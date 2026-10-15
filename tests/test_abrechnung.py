@@ -97,7 +97,8 @@ def test_wiederanlauf_nach_abbruch_ohne_doppelorder(monkeypatch, tmp_path):
     b.abbruch_nach_orders = 2
     with pytest.raises(KeyboardInterrupt): v2.main([])
     st = zustand(tmp_path)
-    assert [a['status'] for a in st['auftraege']] == ['gesendet', 'gesendet', 'vorbereitet']
+    assert [a['status'] for a in st['auftraege']][:3] == ['gesendet', 'gesendet', 'vorbereitet']      # alle vorab gespeichert
+    assert set(a['status'] for a in st['auftraege'][2:]) == {'vorbereitet'}
     b.abbruch_nach_orders = None
     b.neuer_tag('2025-02-27', uhr='19:46:00')                                                   # Nachläufer am selben Tag
     r, code = lauf()

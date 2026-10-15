@@ -7,6 +7,11 @@ import copy, datetime as dt, json, sys, urllib.parse
 import kern
 
 
+def v2_abgelehnt(text):
+    import systembuch_bot
+    return systembuch_bot.Abgelehnt(text)
+
+
 class AlpacaAttrappe:
     def __init__(self, fx, equity=None, positionen=None):
         self.fx = fx; self.aufrufe = []
@@ -94,10 +99,13 @@ class AlpacaAttrappe:
             hh = [(d, e) for d, e in self.historie if d >= q.get('start', '0000')]
             return dict(timestamp=[int(dt.datetime.fromisoformat(d + 'T12:00:00-05:00').timestamp()) for d, _ in hh], equity=[e for _, e in hh])
         if p == '/v2/orders' and m == 'GET':
-            return [o for o in self.orders.values() if o['status'] in ('accepted', 'new')]
+            if q.get('status') == 'all': return [dict(o) for o in self.orders.values()]
+            return [dict(o) for o in self.orders.values() if o['status'] in ('accepted', 'new')]
         if p == '/v2/orders' and m == 'POST':
             s = body['symbol']
-            if s in self.ablehnen: raise RuntimeError(f'Alpaca 403 /v2/orders: {self.ablehnen[s]}')
+            if s in self.ablehnen: raise v2_abgelehnt(f'Alpaca 403 /v2/orders: {self.ablehnen[s]}')
+            if body.get('client_order_id') and any(o['client_order_id'] == body['client_order_id'] for o in self.orders.values()):
+                raise v2_abgelehnt('Alpaca 422 /v2/orders: client_order_id must be unique')
             if body['time_in_force'] == 'cls' and self.abbruch_nach_orders is not None:
                 if sum(1 for o in self.orders.values() if o['time_in_force'] == 'cls') >= self.abbruch_nach_orders: raise KeyboardInterrupt('Runner weg')
             o = self._order(body)

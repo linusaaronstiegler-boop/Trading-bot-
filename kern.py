@@ -284,12 +284,14 @@ def entscheide(zustand, kurse_heute, historie, kalender, param=None, kz=None):
         reserve = sum(abs(w) for s, w in gew.items() if w > 0 or leihbar.get(s)) * eq * faktor
         deckel['wert'] = p['max_brutto'] * eq - reserve
     aufgeschoben = list(zustand.get('aufgeschoben') or [])
+    behalten = []                                                                          # ohne Kurs heute: morgen erneut versuchen
 
     def nachholen(strat):
         """Durch die Vorzeichenwechsel-Sperre aufgeschobene Teile mehrtägiger Strategien (Review 3.2) – vor neuen Signalen."""
         for a in [a for a in aufgeschoben if a['strategie'] == strat]:
             k = kz.get(a['symbol'])
-            if k is None: continue
+            if k is None:
+                behalten.append(a); log.append(f"WARNUNG: aufgeschobenes {strat} {a['symbol']} – heute kein Kurs, bleibt vorgemerkt"); continue
             gilt = {'TSMOM': not tsmom_tag,
                     'MW': not (t['nr'] is not None and t['nr'] >= 2 and a['datum'][:7] < heute[:7]),
                     'MW_LAND': not (t['nr'] is not None and t['nr'] >= 2 and a['datum'][:7] < heute[:7]),
@@ -309,7 +311,7 @@ def entscheide(zustand, kurse_heute, historie, kalender, param=None, kz=None):
                 if s in kz and not hat('MW', s): plane('MW', s, 1, GROESSE['MW'])
         elif strat == 'BB':
             for s in INDEX:
-                if ist_bb_signal(kz.get(s)) and len(offen('BB')) < MAX_OFFEN['BB'] and not hat('BB', s): plane('BB', s, 1, GROESSE['BB'])
+                if ist_bb_signal(kz.get(s)) and len({l['symbol'] for l in offen('BB')}) < MAX_OFFEN['BB'] and not hat('BB', s): plane('BB', s, 1, GROESSE['BB'])
         elif strat == 'IBS_SEKTOR' and not index_signal and not offen('IBS'):
             for s in sorted([s for s in SEKTOREN if s in kz and kz[s]['ibs'] < IBS_SCHWELLE], key=lambda s: kz[s]['ibs']):
                 if len(offen('IBS_SEKTOR')) < MAX_OFFEN['IBS_SEKTOR'] and not hat('IBS_SEKTOR', s): plane('IBS_SEKTOR', s, 1, GROESSE['IBS_SEKTOR'])
@@ -327,7 +329,7 @@ def entscheide(zustand, kurse_heute, historie, kalender, param=None, kz=None):
             if ratio is not None and ratio > VIX_EIN and VIX_ETF in kz and not offen('VIX'): plane('VIX', VIX_ETF, 1, GROESSE['VIX'])
 
     info = dict(heute=heute, faktor=faktor, dd=dd, hwm=hwm, ratio=ratio, index_signal=index_signal, tsmom_tag=tsmom_tag,
-                tsmom_nachgeholt=tsmom_nach, mw_kauf=t['mw_kauf'], mw_verkauf=t['mw_verkauf'], datum_neu=datum_neu,
+                tsmom_nachgeholt=tsmom_nach, mw_kauf=t['mw_kauf'], mw_verkauf=t['mw_verkauf'], datum_neu=datum_neu, aufgeschoben_behalten=behalten,
                 kz=kz, gewichte=gew, log=log)
     return ausstiege, neu, info
 
