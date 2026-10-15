@@ -1,0 +1,5 @@
+# Nur für den Replay-Pfad (python3 systembuch_bot.py --replay …) und die Tests. Der Live-Lauf braucht nichts außer Python 3.11+.
+pandas>=2.0
+numpy>=1.24
+matplotlib>=3.7
+pytest>=8.0
