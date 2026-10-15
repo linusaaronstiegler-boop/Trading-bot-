@@ -442,7 +442,8 @@ def abschaltkriterium(equity_reihe):
         r = [equity_reihe[i] / equity_reihe[i - 1] - 1 for i in range(n - 250, n)]
         mu = sum(r) / len(r); sd = (sum((x - mu) ** 2 for x in r) / (len(r) - 1)) ** 0.5
         out['sharpe_250'] = mu / sd * 252 ** 0.5 if sd > 0 else 0.0
-    if out['rendite_12m'] is not None and out['rendite_12m'] <= K5_RENDITE_12M: out['verletzt'].append(f"12-Monats-Rendite {out['rendite_12m']:.1%} ≤ {K5_RENDITE_12M:.0%}")
-    if out['drawdown'] >= K5_DRAWDOWN: out['verletzt'].append(f"Drawdown {out['drawdown']:.1%} ≥ {K5_DRAWDOWN:.0%}")
-    if out['sharpe_250'] is not None and out['sharpe_250'] <= K5_SHARPE_250: out['verletzt'].append(f"250-Tage-Sharpe {out['sharpe_250']:.2f} ≤ {K5_SHARPE_250:.2f}")
+    eps = 1e-12                                                                          # 1 − 66/100 = 0,33999… soll als 34 % zählen
+    if out['rendite_12m'] is not None and out['rendite_12m'] <= K5_RENDITE_12M + eps: out['verletzt'].append(f"12-Monats-Rendite {out['rendite_12m']:.1%} ≤ {K5_RENDITE_12M:.0%}")
+    if out['drawdown'] >= K5_DRAWDOWN - eps: out['verletzt'].append(f"Drawdown {out['drawdown']:.1%} ≥ {K5_DRAWDOWN:.0%}")
+    if out['sharpe_250'] is not None and out['sharpe_250'] <= K5_SHARPE_250 + eps: out['verletzt'].append(f"250-Tage-Sharpe {out['sharpe_250']:.2f} ≤ {K5_SHARPE_250:.2f}")
     return out

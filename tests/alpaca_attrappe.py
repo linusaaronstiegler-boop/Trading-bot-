@@ -18,6 +18,8 @@ class AlpacaAttrappe:
         self.netzfehler_nach_post = set()                                             # sym: Order kommt an, Antwort geht verloren
         self.abbruch_nach_orders = None                                               # nach n gesendeten MOC-Orders KeyboardInterrupt
         self.fills = []
+        self.uhr_folge = []                                                           # nächste /v2/clock-Antworten (Zeitstempel)
+        self.geschlafen = []
         self.historie = []                                                            # (datum, equity)
         self.closes = {}                                                              # datum → {sym: offizieller Schluss}
 
@@ -55,6 +57,12 @@ class AlpacaAttrappe:
                 self.positionen[sym] = self.positionen.get(sym, 0) - q
                 if self.positionen[sym] == 0: del self.positionen[sym]
 
+    def schlafen(self, s):
+        """time.sleep im Bot: Uhr der Attrappe vorstellen statt zu warten."""
+        self.geschlafen.append(s)
+        t = dt.datetime.fromisoformat(self.clock['timestamp'].replace('Z', '+00:00')) + dt.timedelta(seconds=s)
+        self.clock['timestamp'] = t.strftime('%Y-%m-%dT%H:%M:%SZ')
+
     def neuer_tag(self, datum, uhr='19:45:00', schluss='20:00:00'):
         self.clock = dict(timestamp=f'{datum}T{uhr}Z', next_close=f'{datum}T{schluss}Z', is_open=True)
 
@@ -62,7 +70,9 @@ class AlpacaAttrappe:
     def alp(self, path, body=None, method=None, base=None, tries=5):
         fx = self.fx; m = method or 'GET'; self.aufrufe.append((m, path, body))
         p, _, q = path.partition('?'); q = dict(urllib.parse.parse_qsl(q))
-        if p == '/v2/clock': return dict(self.clock)
+        if p == '/v2/clock':
+            if self.uhr_folge: self.clock['timestamp'] = self.uhr_folge.pop(0)
+            return dict(self.clock)
         if p == '/v2/account': return dict(equity=str(self.equity), last_equity=str(self.last_equity), cash=str(self.cash))
         if p == '/v2/positions':
             return [dict(symbol=s, qty=str(abs(n)), side='long' if n > 0 else 'short', lastday_price=str(fx['live'].get(s, {}).get('px', 1)),
@@ -113,7 +123,7 @@ class AlpacaAttrappe:
         monkeypatch.setattr(v2, 'schlusskurse', schlusskurse)
         monkeypatch.setattr(v2, 'snapshots', lambda symbols: {s: fx['live'][s] for s in symbols if s in fx['live']})
         monkeypatch.setattr(v2, 'lade_vix', lambda: (fx['vix'], fx['vix3m'], 'Fixture'))
-        monkeypatch.setattr(v2.time, 'sleep', lambda s: None)
+        monkeypatch.setattr(v2.time, 'sleep', self.schlafen)
 
     def dry_lauf(self, v2, monkeypatch, tmp_path):
         """Fixture-Bestand als Alpaca-Positionen, damit der Abgleich passt; dann `--dry --force`."""
