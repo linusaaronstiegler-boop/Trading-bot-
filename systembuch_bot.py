@@ -397,6 +397,8 @@ def signale_auswerten(st, hist):
     gruppen = dict(IBS=INDEX, IBS_SEKTOR=SEKTOREN, IBS_LAND=LAENDER)
     for datum in sorted(list(st['signale'])):
         ent = st['signale'][datum]; fertig = {}
+        if datum < min((r[-1][0] for r in hist.values() if r), default=datum) and not any(r[0] == datum for rows in hist.values() for r in rows[-15:]):
+            del st['signale'][datum]; continue                                          # Tag ohne Kerze (z. B. Sonderschließung) nicht ewig mitschleppen
         for s in ent:
             r = next((r for r in hist.get(s, []) if r[0] == datum), None)
             if r and r[2] > r[3]: fertig[s] = (r[4] - r[3]) / (r[2] - r[3])
@@ -478,9 +480,19 @@ def senden(st, heute, kz, ausstiege, einstiege, orders, uhr, offene):
             st['legs'].append(leg)
         a = dict(datum=heute, symbol=s, menge=d, client_order_id=cid if d else None, order_id=None, status='vorbereitet' if d else 'intern', komponenten=komps)
         st['auftraege'].append(a); speichern(st)
-        if d == 0: log(f'{s}: Wechsel innerhalb des Symbols, keine Order (intern zum Schluss verrechnet)'); continue
-        ok, weg = stornieren(s, offene)
         aus_ids = {l['id'] for l, _, _ in aus_s}
+        if d == 0:
+            log(f'{s}: Wechsel innerhalb des Symbols, keine Order (intern zum Schluss verrechnet)')
+            stops = {l['stop_order'] for l, _, _ in aus_s if l.get('stop_order')}           # Stop eines intern geschlossenen BB-Legs muss weg
+            if stops:
+                ok, weg = stornieren(s, [o for o in offene if o['id'] in stops])
+                for o in weg: offene[:] = [x for x in offene if x['id'] != o['id']]
+                for leg, _, _ in aus_s:
+                    if leg.get('stop_order') in {o['id'] for o in weg}: leg.pop('stop_order', None)
+                if not ok: fehler.append(f'STOP NICHT STORNIERT {s}: Stop des geschlossenen BB-Legs bleibt aktiv – bitte von Hand stornieren')
+                speichern(st)
+            continue
+        ok, weg = stornieren(s, offene)
         for o in weg:
             for leg in st['legs']:
                 if leg.get('stop_order') == o['id']:

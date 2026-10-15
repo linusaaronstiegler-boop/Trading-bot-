@@ -167,3 +167,21 @@ def test_dry_schreibt_nur_status_dry(monkeypatch, tmp_path):
     assert dateien == ['STATUS-dry.md', 'state.json']
     assert json.load(open(tmp_path / 'state.json')) == fx['state']                             # unverändert
     assert not [a for a in b.aufrufe if a[0] in ('POST', 'DELETE')]
+
+
+def test_stop_eines_intern_geschlossenen_bb_legs_wird_storniert(monkeypatch, tmp_path):
+    """BB-Leg (mit GTC-Stop) geht raus, gleich großes IBS-Leg kommt rein → Netto 0, keine MOC – der Stop muss trotzdem weg,
+    sonst verkauft er später die Stücke des IBS-Legs."""
+    import time
+    b, fx = broker(monkeypatch, tmp_path)
+    stop = b._order(dict(symbol='SPY', qty='40', side='sell', type='stop', time_in_force='gtc', stop_price='500'))
+    bb = dict(id=1, strategie='BB', symbol='SPY', richtung=1, stueck=40, datum='2025-02-20', einstieg=590.0, status='offen', stop_order=stop['id'], atr20=5)
+    st = json.loads(json.dumps(v2.ZUSTAND_NEU)); st['legs'] = [bb]; st['naechste_id'] = 2
+    ibs = dict(id=None, strategie='IBS', symbol='SPY', richtung=1, stueck=40, datum='2025-02-27', atr20=5)
+    kz = {'SPY': dict(px=585.0)}
+    uhr = dict(jetzt=v2.zeit('2025-02-27T19:45:00Z'), schluss=v2.zeit('2025-02-27T20:00:00Z'), mono=time.monotonic())
+    offene = [dict(id=stop['id'], symbol='SPY')]
+    fehler = v2.senden(st, '2025-02-27', kz, [(bb, 'BB über SMA20', 40)], [ibs], {}, uhr, offene)
+    assert fehler == [] and b.orders[stop['id']]['status'] == 'canceled'
+    assert not [o for o in b.orders.values() if o['time_in_force'] == 'cls']
+    assert st['auftraege'][0]['status'] == 'intern'
