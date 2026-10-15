@@ -31,6 +31,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}   # aktueller Stand beim Jobstart, nicht der beim Auslösen (Nachläufer wartet in der Warteschlange)
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
