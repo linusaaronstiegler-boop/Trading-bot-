@@ -18,6 +18,7 @@ class AlpacaAttrappe:
         self.netzfehler_nach_post = set()                                             # sym: Order kommt an, Antwort geht verloren
         self.abbruch_nach_orders = None                                               # nach n gesendeten MOC-Orders KeyboardInterrupt
         self.fills = []
+        self.mit_bargeld = False                                                      # True: Equity = Bargeld + Positionen (Dauertest)
         self.uhr_folge = []                                                           # nächste /v2/clock-Antworten (Zeitstempel)
         self.geschlafen = []
         self.historie = []                                                            # (datum, equity)
@@ -44,17 +45,24 @@ class AlpacaAttrappe:
             if f > 0:
                 o.update(filled_qty=str(f), filled_avg_price=str(px), filled_at=f"{datum}T20:00:00Z")
                 v = 1 if o['side'] == 'buy' else -1
+                if self.mit_bargeld: self.cash -= v * f * px
                 self.positionen[o['symbol']] = self.positionen.get(o['symbol'], 0) + v * f
                 if self.positionen[o['symbol']] == 0: del self.positionen[o['symbol']]
                 self.fills.append(dict(order_id=o['id'], qty=str(f), price=str(px), symbol=o['symbol']))
             o['status'] = 'filled' if f == q else ('canceled' if f == 0 else 'canceled')
+        if self.mit_bargeld: self.bewerten(preise)
         self.last_equity = self.equity; self.historie.append((datum, self.equity))
+
+    def bewerten(self, preise=None):
+        preise = preise or {s: v['px'] for s, v in self.fx['live'].items()}
+        self.equity = self.cash + sum(n * preise[s] for s, n in self.positionen.items())
 
     def stop_ausloesen(self, sym, px, datum):
         for o in self.orders.values():
             if o['symbol'] == sym and o['type'] == 'stop' and o['status'] == 'accepted':
                 q = int(o['qty']); o.update(status='filled', filled_qty=str(q), filled_avg_price=str(px), filled_at=f'{datum}T15:00:00Z')
                 self.positionen[sym] = self.positionen.get(sym, 0) - q
+                if self.mit_bargeld: self.cash += q * px
                 if self.positionen[sym] == 0: del self.positionen[sym]
 
     def schlafen(self, s):

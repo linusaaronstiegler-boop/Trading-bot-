@@ -2,7 +2,7 @@
 
 Handelt **nur die belegten Regeln** von Linus' Trading-Projekt auf einem Alpaca-Paper-Konto – reines Python, kein LLM, keine Rechenkosten. Ein Lauf pro US-Handelstag: Start 15:28 New York (Cron), **Entscheidung 15:45 New York** (21:45 MESZ / MEZ; 26.–30.10. 20:45 MEZ), alle Orders Market-on-Close vor dem Annahmeschluss 15:50.
 
-> **Stand 15.10.2026, 22:30 – v1 ist ein Trockenlauf-Stand, kein Live-Stand.** Der feindselige Code-Review (`REVIEW-v1.md`, 14 Befunde „hoch“) hat Fehler gefunden, die im Betrieb Geld kosten: Netto-Orders werden dem ersten Leg 1:1 zugeordnet (doppelte Stückzahl im Zustand), abgelehnte Orders werden als ausgeführt gebucht, kein Positionsabgleich gegen Alpaca, Monatswechsel/TSMOM werden nach verpasstem Lauf nicht nachgeholt, Feiertagstabelle falsch (Karfreitag 2027), IEX-Feed verzerrt das IBS auf dünnen ETFs. Zwei Befunde sind hier schon behoben (Commit-Schritt in `bot.yml`, MOC-Annahmeschluss/Lauffenster). **Scharf geschaltet wird erst v2 nach SPEC-v2 inkl. Review-Befunden.** Bis dahin nur `dry`.
+> **Stand 15.10.2026 – v2 gebaut (SPEC-v2 Aufgaben 1–7 inkl. aller Review-Befunde aus `REVIEW-v1.md`), noch nicht scharf.** Offen vor dem ersten Live-Lauf: Alpaca-Schlüssel als GitHub-Secrets, die Paper-Prüfungen (`werkzeuge/paper_pruefungen.py`), ein grüner `dry`-Lauf per Actions. Was gebaut wurde und die genauen Klicks stehen in `ABSCHLUSS.md`. v1 (Stand 22:30) war ein Trockenlauf-Stand: Netto-Orders wurden dem ersten Leg 1:1 zugeordnet, abgelehnte Orders als ausgeführt gebucht, es gab keinen Positionsabgleich und kein Nachholen, die Feiertagstabelle war falsch, der IEX-Feed für Hoch/Tief verzerrte – alles in v2 behoben.
 
 | Strategie | Markt | Regel | Größe | Beleg |
 |---|---|---|---|---|
@@ -38,17 +38,28 @@ Drei Kennzahlen aus der eigenen Kontokurve seit Bot-Start, geprüft in jedem Lau
 
 Ehrlich: Das Kriterium ist ein Katastrophenschutz, kein Vorteilsmesser. Es erkennt ein Buch, das strukturell verliert (48 % binnen drei Jahren), aber nicht ein Buch, das nur sein Alpha verloren hat (16 % binnen drei Jahren) – das ist mit 17 % Schwankung auf der Kontokurve nicht messbar. Ob der Vorteil lebt, prüft man auf Trade-Ebene (IBS-Familie: Ø bp je Haltetag und t im Journal, Vergleich mit K3: Index +16 bp, Land +13 bp), nicht am Kontostand.
 
-## Einrichtung (einmalig, ≈ 10 Minuten)
+## Einrichtung (einmalig, ≈ 15 Minuten)
 1. **Alpaca:** Im Dashboard unter *Paper Trading* ein **zweites Paper-Konto** anlegen (Konto-Menü → „+ New Paper Account“, 100.000 $), dort unter *API Keys* ein Schlüsselpaar erzeugen. Nicht das Konto des Agenten 200k verwenden.
-2. **GitHub:** Privates Repo `systembuch-bot` anlegen (ohne Branch-Schutz, Workflow auf `main`), diese Dateien hochladen (`systembuch_bot.py`, `README.md`, `SPEC-v2.md`, `REVIEW-v1.md`, `yahoo_vorbild.py`, `bot.yml` → wird nach `.github/workflows/bot.yml` verschoben).
+2. **GitHub:** Repo ohne Branch-Schutz, Workflow auf `main` (Schedules laufen nur auf dem Standard-Branch).
 3. **Secrets:** Repo → Settings → Secrets and variables → Actions → `APCA_API_KEY_ID` und `APCA_API_SECRET_KEY` eintragen. Die Schlüssel stehen sonst nirgends.
-4. **Actions erlauben:** Settings → Actions → General → „Read and write permissions“ (damit der Bot `state.json`, `journal.csv`, `STATUS.md` zurückschreiben kann).
-5. **Probelauf:** Actions → systembuch-bot → *Run workflow* → modus `dry`. Danach `STATUS.md` im Repo lesen: Signale und geplante Orders, nichts gesendet.
-6. Ab dann läuft er von selbst Mo–Fr. Stand jederzeit in `STATUS.md`, jede geschlossene Position in `journal.csv`, Fehler in `log.txt`. Im Alpaca-Dashboard siehst du Orders und Positionen.
+4. **Actions erlauben:** Settings → Actions → General → „Read and write permissions“ (damit der Bot `state.json`, `journal.csv`, `equity.csv`, `STATUS.md` zurückschreiben und bei rotem Lauf ein Issue anlegen kann).
+5. **Paper-Prüfungen** (einmal, vor dem ersten Live-Lauf, lokal mit den Schlüsseln): `python3 werkzeuge/paper_pruefungen.py --lesen` (jederzeit; friert `assets.json` ein) und an einem Handelstag zwischen 15:30 und 15:49 ET `--orders`. Ergebnis in `pruefungen-ergebnis.md`.
+6. **Probelauf:** Actions → systembuch-bot → *Run workflow* → modus `dry`. Danach `STATUS-dry.md` lesen: Signale, geplante Orders, VIX-Quelle. Nichts gesendet, nichts gebucht.
+7. Ab dann läuft er von selbst Mo–Fr.
 
-Hinweis zur Ausführung: Einstiege und Ausstiege sind Market-on-Close (Füllung zum offiziellen Schlusskurs, wie im Backtest). Der BB-Stop (3×ATR) wird am Folgetag nach bekanntem Fill als GTC-Stop gesetzt; am Einstiegstag selbst gibt es keinen Stop (Lücke von einem Tag, im Backtest ebenfalls so).
+## Betrieb
+- **Lauf:** Start 15:28 ET (Nachläufer 15:40, Halbtage 12:28/12:40), wartet bis 15:45, entscheidet, sendet je Symbol höchstens eine MOC-Order. Orders gehen nur 10,5–30 Min vor Schluss raus, sonst Exit 1 ohne Buchung.
+- **Abrechnung im Folgelauf:** Fills über `/v2/orders` und `/activities/FILL`, Netto-Fill je Symbol per FIFO auf die Legs verteilt. Danach Positionsabgleich: Weichen Legs und Alpaca-Positionen voneinander ab, wird nicht gehandelt („ABGLEICH NÖTIG“, Exit 1).
+- **Dateien:** `STATUS.md` (Konto, K5, offene Legs mit unrealisiertem Ergebnis, Stand je Strategie, IBS-Vorteil auf Trade-Ebene, Termine, Log), `journal.csv` (jedes geschlossene Leg mit Fill und offiziellem Schluss, `abweichung_bp` = MOC-Kosten gegenüber dem Schluss), `equity.csv` (Tageskurve), `berichte/JJJJ-WW.md` (Wochenbericht), `log.txt`, `state.json`.
+- **Alarm:** Jeder rote Lauf (Fehler, Abgleich, abgelehnte Order, drei Läufe ohne VIX, Not-Aus, Abschaltkriterium) legt ein GitHub-Issue an. GitHub schickt dazu eine Mail, wenn Benachrichtigungen für das Repo an sind.
+- **Vorzeichenwechsel:** Alpaca kann eine Position nicht am selben Tag von long auf short drehen oder umgekehrt. Der Bot handelt dann nur bis null. Den Rest holt er bei TSMOM/MW/BB/VIX am Folgetag nach, bei IBS verfällt er. Was das kostet, steht in `replay/BEOBACHTUNGEN.md`.
+- **Gestoppt** (Not-Aus oder K5): kein Handel, bis in `state.json` `gestoppt` auf `false` steht – erst nach Sitzung mit Linus.
 
-Lokal statt GitHub: `APCA_API_KEY_ID=… APCA_API_SECRET_KEY=… python3 systembuch_bot.py --dry --force` (Aufgabenplanung 21:28 Berlin ohne `--dry --force`; der Lauf wartet selbst bis 15:45 ET).
+Hinweis zur Ausführung: Einstiege und Ausstiege sind Market-on-Close (Füllung zum offiziellen Schlusskurs, wie im Backtest). Der BB-Stop (3×ATR) wird im Lauf nach bekanntem Fill als GTC-Stop gesetzt. Am Einstiegstag selbst gibt es keinen Stop (Lücke von einem Tag, im Backtest ebenfalls so). Vor einer MOC-Order im selben Symbol wird er storniert und danach neu gesetzt.
+
+Lokal statt GitHub: `APCA_API_KEY_ID=… APCA_API_SECRET_KEY=… python3 systembuch_bot.py --dry --force` (Aufgabenplanung 21:28 Berlin ohne `--dry --force`; der Lauf wartet selbst bis 15:45 ET). Rückrechnung: `pip install -r requirements-replay.txt`, dann `python3 systembuch_bot.py --replay 2010-01-01 2026-10-14` (K4-Schalter: `--ohne-sektor --ohne-mw-land --tsmom-reserve --bremse-dd --bremse-faktor --max-brutto`). Tests: `python3 -m pytest -q`.
+
+Code: `kern.py` = Regeln (rein, ohne Netz), `systembuch_bot.py` = Live-Lauf (nur Standardbibliothek), `replay.py` = Rückrechnung (pandas), `tests/` = pytest mit Alpaca-Attrappe und eingefrorenen Tagen.
 
 ## Was der Bot NICHT tut
 Kein Daytrading, keine Optionen, kein Polymarket, kein Hebel über die Alpaca-Marge hinaus, kein Nachkaufen, keine Regel, die nicht vorab getestet wurde. Änderungen an den Regeln nur mit neuem Test (Lernzeit, Tresor, t ≥ 2/3) – siehe `wissen/11-Testplan-2026-10.md` im Projekt.
