@@ -9,7 +9,7 @@ def kal(von='2026-01-01', bis='2028-12-31'):
 def test_karfreitag_2027_ist_26_maerz():
     k = kal()
     assert not k.ist_handelstag('2027-03-26')
-    assert k.ist_handelstag('2027-04-02')                       # v1-Tabelle hatte fälschlich den 02.04.
+    assert k.ist_handelstag('2027-04-02')                       # v1-Tabelle hatte bis 15.10. 23:15 fälschlich den 02.04.
 
 
 def test_heiligabend_2027_feiertag_und_silvester_2027_handelstag():

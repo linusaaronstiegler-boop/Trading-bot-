@@ -2,7 +2,7 @@
 
 Gegenstand: `systembuch_bot.py` v1, `bot.yml`, `README.md` (maßgeblich), `SPEC-v2.md`. Referenz für Regeltreue: `code/forschung/K3/bt.py` (1:1-Nachbau, Replay +12,0 % p.a.). Geprüft wurde: Alpaca-Doku zu `cls`-Annahmeschluss und Fehlerursachen (WebFetch docs.alpaca.markets, alpaca.markets/learn), `git add`-Verhalten (lokal getestet), Osterformel 2027, Monatswechsel-Termine aus `handelstage()` (nachgerechnet). Keine Code-, Regel- oder Workflow-Änderung vorgenommen.
 
-*Nachtrag Sitzung 22:30: Befunde 5.1 (Commit-Schritt), 3.3/3.4/6.3 (Lauffenster, MOC-Annahmeschluss, Nachläufer) und 1.11 (Halbtage als Cron) sind in v1 bereits behoben (bot.yml, Fensterkonstanten). Alle übrigen Befunde gelten für v2.*
+*Nachtrag Sitzung 22:30–23:15: Befunde 5.1 (Commit-Schritt), 3.3/3.4/6.3 (Lauffenster, MOC-Annahmeschluss, Nachläufer), 1.11 (Halbtage als Cron), 1.12 (Karfreitag 2027), 5.5 (Positionsabgleich zu Laufbeginn, Exit 1 bei Abweichung) und 3.5 (abgelehnte Orders: Zustand unverändert, Exit 1) sind in v1 bereits behoben. Alle übrigen Befunde gelten für v2 – insbesondere 3.1 (Netto-Order 1:1 ans Leg), 5.4 (Nachholen), 5.2 (atomarer State), 1.3 (IEX-Feed), 1.8/3.2 (GTC-Stop/Vorzeichenwechsel), 2.5 (Höchststand-Quelle).*
 
 Legende: ✔ erfüllt · ✘ Fehler · ? Vermutung mit 5-Minuten-Prüfung · Schwere: **hoch** = kostet Geld oder stoppt den Bot im Normalbetrieb, mittel = tritt in Sonderfällen ein, niedrig = kosmetisch/später.
 

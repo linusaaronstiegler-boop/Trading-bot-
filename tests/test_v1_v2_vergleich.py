@@ -1,6 +1,6 @@
 """Abnahme Aufgabe 1: v1 und v2 liefern auf denselben eingefrorenen Tagesdaten dieselben Netto-Orders.
 
-v1 (`tests/v1_referenz.py`, unveränderte Kopie des Stands vom 15.10.2026) läuft mit `--dry --force`; Netz, Uhr und Konto
+v1 (`tests/v1_referenz.py`, unveränderte Kopie des Stands vom 15.10.2026, 23:15) läuft mit `--dry --force`; Netz, Uhr und Konto
 werden durch die Fixture ersetzt. v2 rechnet mit `kern.entscheide()` auf denselben Daten und demselben Kalender wie v1
 (v1-Feiertagstabelle), damit nur die Entscheidungslogik verglichen wird.
 """
@@ -17,6 +17,10 @@ def lauf_v1(fx, monkeypatch, tmp_path):
     def alp(path, body=None, method=None, base=None, tries=3):
         if path == '/v2/clock': return fx['clock']
         if path == '/v2/account': return {'equity': str(fx['equity'])}
+        if path == '/v2/positions':                                                      # v1 seit 23:15: Abgleich Legs ↔ Alpaca – Fixture-Bestand passt
+            pos = {}
+            for l in fx['state'].get('legs', []): pos[l['symbol']] = pos.get(l['symbol'], 0) + l['richtung'] * l['stueck']
+            return [dict(symbol=s, qty=str(n), side='long' if n > 0 else 'short', asset_class='us_equity') for s, n in pos.items() if n]
         if path.startswith('/v2/assets/'): return {'shortable': fx['leihbar'].get(path.rsplit('/', 1)[1], False)}
         raise AssertionError(f'unerwarteter Aufruf {path}')
     gefangen = {}

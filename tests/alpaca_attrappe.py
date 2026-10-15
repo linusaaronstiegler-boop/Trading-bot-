@@ -18,8 +18,9 @@ class AlpacaAttrappe:
         self.clock = dict(fx['clock'])
         self.equity = float(equity if equity is not None else fx['equity']); self.cash = self.equity; self.last_equity = self.equity
         self.positionen = dict(positionen or {})                                      # sym → Stück (signiert)
+        self.fremde_positionen = []                                                   # Rohzeilen anderer Anlageklassen (z. B. Krypto)
         self.orders = {}; self.n = 0
-        self.ablehnen = {}                                                            # sym → Fehlertext (POST wird abgelehnt)
+        self.ablehnen = {}                                                            # sym → Fehlertext (MOC-POST wird abgelehnt)
         self.netzfehler_nach_post = set()                                             # sym: Order kommt an, Antwort geht verloren
         self.abbruch_nach_orders = None                                               # nach n gesendeten MOC-Orders KeyboardInterrupt
         self.fills = []
@@ -89,8 +90,9 @@ class AlpacaAttrappe:
             return dict(self.clock)
         if p == '/v2/account': return dict(equity=str(self.equity), last_equity=str(self.last_equity), cash=str(self.cash))
         if p == '/v2/positions':
-            return [dict(symbol=s, qty=str(abs(n)), side='long' if n > 0 else 'short', lastday_price=str(fx['live'].get(s, {}).get('px', 1)),
-                         market_value=str(n * fx['live'].get(s, {}).get('px', 1))) for s, n in self.positionen.items()]
+            return [dict(symbol=s, qty=str(n), side='long' if n > 0 else 'short', asset_class='us_equity',
+                         lastday_price=str(fx['live'].get(s, {}).get('px', 1)),
+                         market_value=str(n * fx['live'].get(s, {}).get('px', 1))) for s, n in self.positionen.items()] + list(self.fremde_positionen)
         if p.startswith('/v2/assets/'): return {'shortable': fx['leihbar'].get(p.rsplit('/', 1)[1], False)}
         if p == '/v2/calendar':
             tage, schluss = kern.regel_handelstage(q['start'], q['end'])
@@ -104,7 +106,8 @@ class AlpacaAttrappe:
             return [dict(o) for o in self.orders.values() if o['status'] in ('accepted', 'new')]
         if p == '/v2/orders' and m == 'POST':
             s = body['symbol']
-            if s in self.ablehnen: raise v2_abgelehnt(f'Alpaca 403 /v2/orders: {self.ablehnen[s]}')
+            if s in self.ablehnen and body['time_in_force'] == 'cls':                  # nur die MOC; Stops gehen durch
+                raise v2_abgelehnt(f'Alpaca 403 /v2/orders: {self.ablehnen[s]}')
             if self.kauf_flip_ablehnen and body['side'] == 'buy' and self.positionen.get(s, 0) < 0 and any(
                     o['symbol'] == s and o['side'] == 'buy' and o['status'] == 'accepted' for o in self.orders.values()):
                 raise v2_abgelehnt('Alpaca 403 /v2/orders: insufficient qty available for order')

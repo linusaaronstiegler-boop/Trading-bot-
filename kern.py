@@ -241,7 +241,8 @@ def entscheide(zustand, kurse_heute, historie, kalender, param=None, kz=None):
             log.append(f"WARNUNG: kein Kurs für offenes Leg {leg.get('id')} {leg['strategie']} {s} – heute kein Ausstieg möglich"); continue
         st_ = leg['strategie']
         if leg.get('ausstieg_offen'):                                                     # Review 3.5: gestern abgelehnt/nicht gefüllt → heute nachholen
-            ausstiege.append((leg, f"{leg['ausstieg_offen'].get('grund', 'Ausstieg')} (nachgeholt)")); continue
+            ao = leg['ausstieg_offen']; grund = ao.get('grund', 'Ausstieg') if isinstance(ao, dict) else 'Ausstieg'   # v1: Datum als Text
+            ausstiege.append((leg, f"{grund} (nachgeholt)")); continue
         if st_ in IBS_FAMILIE and leg['datum'] < heute:
             if k['ibs'] >= IBS_SCHWELLE: ausstiege.append((leg, 'IBS Ausstieg Folgetag'))
             else: datum_neu[leg.get('id')] = heute                                       # Folgesignal: halten, Tag neu zählen

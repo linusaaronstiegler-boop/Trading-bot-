@@ -167,7 +167,9 @@ def test_bb_stop_nach_moc_kauf_erst_im_naechsten_lauf(monkeypatch, tmp_path):
     assert bb.get('stop_fehlt_seit') == '2025-02-27' and not bb.get('stop_order')
 
 
-def test_kein_verwaister_stop_bei_abgelehnter_moc_und_internem_bb_ausstieg(monkeypatch, tmp_path):
+def test_abgelehnte_moc_bb_leg_bleibt_ganz_mit_stop(monkeypatch, tmp_path):
+    """BB-Ausstieg 30 + IBS-Einstieg 38 → Netto +8 abgelehnt: Symbol bleibt unverändert (v1, Review 3.5), das BB-Leg
+    behält seine 30 Stück und bekommt den stornierten Stop über die volle Menge zurück – kein Leg ohne Schutz."""
     import time
     b, fx = broker(monkeypatch, tmp_path)
     b.positionen['SPY'] = 30
@@ -179,7 +181,9 @@ def test_kein_verwaister_stop_bei_abgelehnter_moc_und_internem_bb_ausstieg(monke
     uhr = dict(jetzt=v2.zeit('2025-02-27T19:45:00Z'), schluss=v2.zeit('2025-02-27T20:00:00Z'), mono=time.monotonic())
     fehler = v2.senden(st, '2025-02-27', {'SPY': dict(px=585.0)}, [(bb, 'BB Tag 15', 30)], [ibs], {'SPY': 8}, uhr,
                        [dict(id=stop['id'], symbol='SPY', client_order_id='sb-stop-1-x-1')])
-    assert fehler and not [o for o in b.orders.values() if o['type'] == 'stop' and o['status'] == 'accepted']
+    assert fehler and b.orders[stop['id']]['status'] == 'canceled'
+    neu = [o for o in b.orders.values() if o['type'] == 'stop' and o['status'] == 'accepted']
+    assert [(o['symbol'], o['qty']) for o in neu] == [('SPY', '30')] and bb['stop_order'] == neu[0]['id']
 
 
 def test_stop_fill_waehrend_des_wartens_kein_geisterleg(monkeypatch, tmp_path):

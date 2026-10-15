@@ -41,7 +41,7 @@ ENTSCHEIDUNG_MIN = 15.0      # Minuten vor Schluss, zu denen Kurse geladen und e
 START_FRUEHESTENS_MIN = 40.0 # Lauf darf ab hier starten und wartet (Cron 15:28 ET + Verzug)
 START_SPAETESTENS_MIN = 11.5 # später gestartete Läufe handeln nicht mehr (Nachläufer-Cron 15:40 ET fängt Verzug ab)
 ORDER_SPAETESTENS_MIN = 10.5 # vor der Orderschleife Uhr erneut lesen; darunter keine Orders (MOC-Annahmeschluss 15:50 ET)
-FEIERTAGE = {'2026-11-26', '2026-12-25', '2027-01-01', '2027-01-18', '2027-02-15', '2027-04-02', '2027-05-31', '2027-06-18', '2027-07-05', '2027-09-06', '2027-11-25', '2027-12-24'}
+FEIERTAGE = {'2026-11-26', '2026-12-25', '2027-01-01', '2027-01-18', '2027-02-15', '2027-03-26', '2027-05-31', '2027-06-18', '2027-07-05', '2027-09-06', '2027-11-25', '2027-12-24'}  # Karfreitag 2027 = 26.03. (Review 1.12); v2: /v2/calendar
 HALBE_TAGE = {'2026-11-27', '2026-12-24', '2027-11-26'}
 VORRANG = ('IBS', 'MW', 'BB', 'IBS_SEKTOR', 'IBS_LAND', 'TSMOM', 'MW_LAND', 'VIX')
 
@@ -189,6 +189,18 @@ def main():
                     leg['stueck'] = 0; log(f'Leg {leg["id"]} {leg["symbol"]} nicht gefüllt ({o.get("status")}) – gestrichen')
             except Exception as e: log(f'Order {oid} nicht lesbar: {str(e)[:100]}')
     st['legs'] = [l for l in st['legs'] if l['stueck'] > 0]
+
+    # 1b) Positionsabgleich (Review 5.5): Summe der Legs je Symbol muss zu Alpaca passen, sonst kein Handel
+    soll = {}
+    for l in st['legs']: soll[l['symbol']] = soll.get(l['symbol'], 0) + l['richtung'] * l['stueck']
+    ist = {p['symbol']: int(float(p['qty'])) for p in alp('/v2/positions') if p.get('asset_class', 'us_equity') == 'us_equity'}
+    abweichung = {s: (soll.get(s, 0), ist.get(s, 0)) for s in set(soll) | set(ist) if soll.get(s, 0) != ist.get(s, 0)}
+    if abweichung:
+        log(f'ABGLEICH: Legs ≠ Alpaca-Positionen {abweichung} (Soll aus state.json, Ist von Alpaca)')
+        if not a.dry:
+            open('STATUS.md', 'w').write(f'# Systembuch-Bot – **ABGLEICH NÖTIG** ({heute})\n\nLegs im Zustand und Positionen bei Alpaca stimmen nicht überein: `{abweichung}`.\nKein Handel, bis das von Hand geklärt ist (state.json anpassen oder Position glattstellen).\n')
+            sys.exit(1)
+        log('--dry: Abgleich-Abweichung nur gemeldet, Lauf geht weiter')
     for leg in st['legs']:
         if leg['strategie'] == 'BB' and leg.get('einstieg') and not leg.get('stop_order') and not a.dry:
             stop = round(leg['einstieg'] - 3 * leg['atr20'], 2)
@@ -309,7 +321,7 @@ def main():
             try: alp(f'/v2/orders/{leg["stop_order"]}', method='DELETE')
             except Exception: pass
     bestand = {p['symbol']: float(p['qty']) for p in alp('/v2/positions')}
-    gesendet = {}
+    gesendet = {}; fehler = set()
     for s, d in plan.items():
         seite = 'buy' if d > 0 else 'sell'
         # Alpaca: Short-Verkauf und Long-Verkauf nicht in einer Order mischen → bei Vorzeichenwechsel in zwei Orders teilen
@@ -323,17 +335,25 @@ def main():
                         client_order_id=f'sb-{heute.isoformat()}-{s}-{abs(t)}-{int(time.time()) % 100000}')
             try:
                 o = alp('/v2/orders', body, 'POST'); gesendet.setdefault(s, []).append(o['id']); log(f'MOC {body["side"]} {abs(t)} {s} → {o["id"]}')
-            except Exception as e: log(f'Order {s} {t} FEHLER: {str(e)[:160]}')
+            except Exception as e:
+                fehler.add(s); log(f'Order {s} {t} FEHLER: {str(e)[:160]}')
     # 7) Legs buchen (Ausstiegspreis = heutiger Schluss ≈ letzter Kurs; Fill wird nicht nachträglich korrigiert – Journal ist Näherung auf Cent-Ebene)
+    # Review 3.5: Bei abgelehnter Order bleibt der Zustand für dieses Symbol unverändert – schließende Legs bleiben offen (Vermerk), neue Legs werden nicht angelegt.
     for leg, grund in schliessen:
+        if leg['symbol'] in fehler:
+            leg['ausstieg_offen'] = heute.isoformat(); log(f'Leg {leg["id"]} {leg["symbol"]}: Ausstieg nicht gesendet, bleibt offen'); continue
         journal(leg, kz[leg['symbol']]['px'], grund, heute.isoformat()); st['legs'].remove(leg)
     for leg in neu:
+        if leg['symbol'] in fehler:
+            log(f'Einstieg {leg["strategie"]} {leg["symbol"]} nicht angelegt (Order abgelehnt)'); continue
         leg['id'] = st['naechste_id']; st['naechste_id'] += 1
         leg['order_id'] = (gesendet.get(leg['symbol']) or [None])[0]
         if leg['order_id'] is None: leg['einstieg'] = kz[leg['symbol']]['px']                 # Netto 0 (Wechsel innerhalb des Symbols): Buchwert = Kurs
         st['legs'].append(leg)
     st['letzter_lauf'] = heute.isoformat(); speichern(st)
     status_md(st, eq, dd, kz, ratio, plan, schliessen, neu, heute)
+    if fehler:
+        log(f'FEHLER: {len(fehler)} Symbol(e) mit abgelehnter Order {sorted(fehler)} – Lauf rot (Exit 1), Zustand dafür unverändert'); sys.exit(1)
 
 def handelstage_zwischen(d0, d1):
     d = d0; out = []

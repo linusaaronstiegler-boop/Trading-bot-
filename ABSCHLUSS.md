@@ -1,6 +1,6 @@
 # Abschluss Systembuch-Bot v2 – Claude-Code-Sitzung 15./16.10.2026
 
-Repo `linusaaronstiegler-boop/Trading-bot-` (= `systembuch-bot`), Branch **`claude/systembuch-v2`**, ein Commit je Aufgabe. **`pytest`: 107 Tests grün**, lokal und auf GitHub (Workflow `tests`).
+Repo `linusaaronstiegler-boop/Trading-bot-` (= `systembuch-bot`), Branch **`claude/systembuch-v2`**, ein Commit je Aufgabe. **`pytest`: 113 Tests grün**, lokal und auf GitHub (Workflow `tests`).
 
 ## Kurz
 
@@ -24,6 +24,9 @@ Repo `linusaaronstiegler-boop/Trading-bot-` (= `systembuch-bot`), Branch **`clau
 | 7 Echtgeld | `ucits.md`: Gegenstücke mit ISIN/Xetra/TER/Spread, Brokerkosten inkl. Traders Place, Break-even-Rechnung, C40-Ergebnis | 4516f79 |
 | Review v2 | 1 Befund hoch, 5 mittel, 6 niedrig behoben (siehe unten) | c800706, ecc4c99 |
 | Paper | Live-Trockenlauf, Alpaca-Fixture, `assets.json`, Prüfungen 1 und 3 | 1647d41 |
+| v1-Stand 23:15 | Neue `SPEC-v2.md`, `REVIEW-v1.md`, v1-Referenz im Test ersetzt. Die drei v1-Fixes (Karfreitag 2027, Abgleich nur `us_equity` mit Exit 1 bzw. nur Meldung im dry, abgelehnte Order = Symbol unverändert + Exit 1) in v2 übernommen und **gegen v1 auf denselben Fixtures getestet** (`tests/test_v1_fixes.py`); v1 = v2 weiter auf allen 6 Tagen | NEU_COMMIT |
+
+`bot.yaml` aus dem letzten Upload ist gleich dem ursprünglichen; `.github/workflows/bot.yml` bleibt die weiterentwickelte Fassung (Halbtage, dry/live-Auswahl, Artifact, Issue-Alarm).
 
 Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, `ucits.md`, `werkzeuge/paper_pruefungen.py`, `pruefungen-ergebnis.md`, `replay/`, `tests/`, `.github/workflows/tests.yml`.
 
@@ -50,8 +53,8 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 1. **Arbeitsbranch** `claude/systembuch-v2` statt direkt `main` (Regel meiner Umgebung). Für den Betrieb musst du nach `main` mergen (Klick unten).
 2. **Fixtures:** Ohne Schlüssel kamen fünf Tage aus Yahoo-Kursen im Alpaca-Format (je ein Regelpfad). Sobald die Schlüssel da waren, kam ein echter Alpaca-`--dry`-Tag dazu (`tests/fixtures/alpaca_2026-10-15.json`). Weitere Tage lassen sich mit `--aufzeichnen` einfrieren.
 3. **Vorzeichenwechsel (Review 3.2):** Heute wird nur bis null gehandelt, in beiden Richtungen. Für short → long gibt es einen Forenbericht über die Ablehnung, aber keine Doku. Den Rest holen TSMOM/MW/MW-Land/BB/VIX am Folgetag nach, bei der IBS-Familie verfällt er, weil das Signal nur für den Schluss des Signaltags gilt.
-4. **Abgelehnter Ausstieg:** Er wird im nächsten Lauf ohne neue Signalprüfung nachgeholt, weil die Regel ihn am Vortag ausgelöst hat. Nicht ausgeführte Einstiege mehrtägiger Strategien werden ebenfalls nachgeholt.
-5. **Intern verrechnete Teile** (Ausstieg und Einstieg im selben Symbol) werden zum offiziellen Schluss gebucht. Bei einer Teilfüllung bekommen auf der Netto-Seite zuerst die Ausstiege den Fill (ältestes Leg zuerst), dann die Einstiege in Vorrang-Reihenfolge.
+4. **Abgelehnter Ausstieg:** Er wird im nächsten Lauf ohne neue Signalprüfung nachgeholt, weil die Regel ihn am Vortag ausgelöst hat. Steht das Einstiegssignal dann weiter, gibt es einen frischen Einstieg (netto geht nur die Differenz an die Börse), so als wäre der Ausstieg am Vortag ausgeführt worden. Nicht ausgeführte Einstiege mehrtägiger Strategien werden ebenfalls nachgeholt. Ein v1-Zustand mit `ausstieg_offen` als Datum wird beim Laden übernommen.
+5. **Abgelehnte Netto-Order = Symbol unverändert** (wie deine v1 von 23:15): Auch der Teil, der sich intern hätte verrechnen lassen (z. B. MW verkauft 44 SPY, IBS kauft 23), wird nicht gebucht. Alle Ausstiege bleiben offen, alle Einstiege entfallen, ein BB-Leg bekommt seinen Stop über die volle Menge zurück. Das hatte ich vorher anders gebaut (interner Teil gebucht); der Paritätstest gegen deine v1 hat den Unterschied gezeigt. **Intern verrechnete Teile** ohne Börsenorder (netto 0) werden weiter zum offiziellen Schluss gebucht. Bei einer Teilfüllung bekommen auf der Netto-Seite zuerst die Ausstiege den Fill (ältestes Leg zuerst), dann die Einstiege in Vorrang-Reihenfolge.
 6. **Brutto-Deckel aus Legs statt aus Positionen** (Review 2.2): Der Positionsabgleich zu Beginn jedes Laufs stellt sicher, dass beides gleich ist.
 7. **Not-Aus und K5 per MOC** statt `DELETE /v2/positions` (deine Regel 4). Gestoppt heißt jetzt: per MOC weiter abwickeln, bis alles glatt ist (rot), danach grün „gestoppt“. Ist der Not-Aus fällig und weichen Legs und Positionen ab, werden die Alpaca-Positionen glattgestellt.
 8. **`--force` nur mit `--dry`.** Zusätzlich gibt es eine harte Grenze von 30 Min vor Schluss für jede Order (deine Regel 4), die Konstanten aus K6 sind unverändert.
@@ -64,13 +67,13 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 
 ## Review-Befunde → Status
 
-**REVIEW-v1 (14 hoch):** 3.1 Netto-Order 1:1 ans Leg ✔ (FIFO, Abnahmetest IBS+MW SPY: eine Order 84, Legs 42/42) · 3.2 Vorzeichenwechsel ✔ (Sperre; Prüfung 4 bestätigt das Alpaca-Verhalten, sobald gelaufen) · 3.5 Ablehnung als ausgeführt gebucht ✔ · 5.2 Zustand nicht atomar ✔ · 5.4 kein Nachholen ✔ · 5.5 kein Abgleich ✔ · 1.8/1.9 GTC-Stop reserviert Stücke ✔ (Storno mit Warten, neu setzen) · 1.11/1.12/4.8 Kalender ✔ · 1.3/4.2 IEX ✔ (SIP; Prüfung 1 bestanden) · 2.5 Höchststand ✔ · 3.3/3.4/5.1/6.3 schon in v1 behoben. **Mittel:** 1.2 Signalabweichung gemessen ✔ · 2.2 ✔ (Entscheidung 6) · 2.3 Marge ✔ (Prüfung 3: Reg-T 200.000 $ bei 1,9 × 100.000 $) · 3.7 Teilfüllung ✔ · 4.4 fehlendes Symbol ✔ · 4.5 VIX ✔ (Ersatzquellen, Alarm nach 3 Läufen) · 5.3 Wiederholungen 5× ✔ · 5.6 Artifact ✔ · 6.7 Exit 1 + Issue ✔. **Niedrig:** 1.18 VORRANG ✔ · 2.7 Log < 1 Stück ✔ · 3.8 Stop storniert ✔ · 4.7 Leer-Commits ✔ · 5.7 Dry schreibt Journal ✔ · 5.9 tote Felder ✔ · 6.8 STATUS-dry ✔ · 1.7 BB am Ex-Tag: offen (nur an einem SPY-Ex-Tag prüfbar) · 1.16 Short per MOC: Prüfung 2.
+**REVIEW-v1 (14 hoch):** 3.1 Netto-Order 1:1 ans Leg ✔ (FIFO, Abnahmetest IBS+MW SPY: eine Order 84, Legs 42/42) · 3.2 Vorzeichenwechsel ✔ (Sperre; Prüfung 4 bestätigt das Alpaca-Verhalten, sobald gelaufen) · 3.5 Ablehnung als ausgeführt gebucht ✔ · 5.2 Zustand nicht atomar ✔ · 5.4 kein Nachholen ✔ · 5.5 kein Abgleich ✔ · 1.8/1.9 GTC-Stop reserviert Stücke ✔ (Storno mit Warten, neu setzen) · 1.11/1.12/4.8 Kalender ✔ · 1.3/4.2 IEX ✔ (SIP; Prüfung 1 bestanden) · 2.5 Höchststand ✔ · 3.3/3.4/5.1/6.3 schon in v1 behoben · 1.12/5.5/3.5 zusätzlich in v1 (23:15) behoben, in v2 genauso umgesetzt und gegen v1 getestet. **Mittel:** 1.2 Signalabweichung gemessen ✔ · 2.2 ✔ (Entscheidung 6) · 2.3 Marge ✔ (Prüfung 3: Reg-T 200.000 $ bei 1,9 × 100.000 $) · 3.7 Teilfüllung ✔ · 4.4 fehlendes Symbol ✔ · 4.5 VIX ✔ (Ersatzquellen, Alarm nach 3 Läufen) · 5.3 Wiederholungen 5× ✔ · 5.6 Artifact ✔ · 6.7 Exit 1 + Issue ✔. **Niedrig:** 1.18 VORRANG ✔ · 2.7 Log < 1 Stück ✔ · 3.8 Stop storniert ✔ · 4.7 Leer-Commits ✔ · 5.7 Dry schreibt Journal ✔ · 5.9 tote Felder ✔ · 6.8 STATUS-dry ✔ · 1.7 BB am Ex-Tag: offen (nur an einem SPY-Ex-Tag prüfbar) · 1.16 Short per MOC: Prüfung 2.
 
 **Review v2 (feindselig, 15.10. 23:00, mit Gegenprüfung):**
 - **Hoch:** Ein Nachläufer mit veraltetem Checkout hätte die MOC-Orders des ersten Laufs storniert und neu gesendet. ✔ Jetzt gilt: Gibt es heutige Bot-Orders bei Alpaca, die `state.json` nicht kennt, endet der Lauf ohne Änderung. Eigene MOC-Orders werden nie storniert, der Checkout holt den aktuellen Stand.
 - **Mittel:** Not-Aus mit abgelehnter Order (✔ Abwicklung bis glatt) · TSMOM nach Abbruch (✔ alle Aufträge vorab gespeichert, Nachholen) · Schlüssel mit Zeilenumbruch landete im Log (✔ geprüft und geschwärzt) · Verbindungsabbruch nach dem Senden (✔ Nachschau per client_order_id) · BB-Stop ohne client_order_id (✔ übernehmen statt verdoppeln).
 - **Niedrig:** BB-Höchstzahl ✔ · Aufschub ohne Kurs ✔ · Not-Aus vor dem Abgleich ✔ · Storno-Ausnahme ✔ · Uhr direkt vor dem POST ✔ · Wartezeit abzüglich Vorbereitung ✔ · Höchststand-Historie nur 1 Monat ✔ · veraltete Snapshot-Kerze ✔.
-- **Mittel/niedrig (Prüfer Regeltreue/Abrechnung/API):** doppelte Journalzeilen nach Abbruch ✔ (idempotent, Zustand direkt nach der Abrechnung gespeichert) · Stop-Fill während des Wartens auf 15:45 ✔ (Stops werden zuerst abgerechnet, Ausstiege auf den Restbestand gekappt) · verwaister Stop nach abgelehnter MOC ✔ · aufgeschobene Teile ohne Kurs gingen live verloren ✔ · Neustart nach Not-Aus übernahm alte equity.csv ✔ (Kurve nur ab Start) · intern verrechnete Teile zum Fill statt zum Schluss gebucht ✔ (Mischpreis je Leg) · Stop-Ausstieg verfälschte die MOC-Abweichung ✔ · Haltetage über 100 Tage falsch ✔ (Kalender reicht bis zum ältesten Leg).
+- **Mittel/niedrig (Prüfer Regeltreue/Abrechnung/API):** doppelte Journalzeilen nach Abbruch ✔ (idempotent, Zustand direkt nach der Abrechnung gespeichert) · Stop-Fill während des Wartens auf 15:45 ✔ (Stops werden zuerst abgerechnet, Ausstiege auf den Restbestand gekappt) · verwaister Stop nach abgelehnter MOC ✔ (jetzt: Leg bleibt ganz, Stop über die volle Menge zurück) · aufgeschobene Teile ohne Kurs gingen live verloren ✔ · Neustart nach Not-Aus übernahm alte equity.csv ✔ (Kurve nur ab Start) · intern verrechnete Teile zum Fill statt zum Schluss gebucht ✔ (Mischpreis je Leg) · Stop-Ausstieg verfälschte die MOC-Abweichung ✔ · Haltetage über 100 Tage falsch ✔ (Kalender reicht bis zum ältesten Leg).
 - **Hoch (Prüfer Abrechnung):** BB-Stop nach MOC-Kauf im Symbol wird von Alpaca abgelehnt (Wash-Trade-Schutz). ✔ teilweise: Der Bot setzt den Stop jetzt bewusst erst im nächsten Lauf neu, statt eine Ablehnung zu provozieren, und der Replay bildet die Lücke ab (Wirkung ≈ 0). Lückenlos nur mit Nachlauf außerhalb des Fensters (offen, siehe oben).
 
 ## Paper-Prüfungen (REVIEW-v1 §8)
@@ -78,7 +81,7 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 | Nr. | Prüfung | Ergebnis |
 |---|---|---|
 | 1 | Snapshot `feed=delayed_sip` | **bestanden**: HTTP 200, Hoch/Tief aus SIP |
-| 2 | Short-MOC 1 IWM ohne Position | **offen**: nur 15:30–15:49 ET |
+| 2 | Short-MOC 1 IWM ohne Position | **offen**: nur 15:30–15:49 ET, die Schlüssel kamen am 15.10. erst nach Börsenschluss |
 | 3 | SVXY-Marge, Kaufkraft | **bestanden**: SVXY marginable, Wartungsmarge 30 %, nicht leihbar; Reg-T-Kaufkraft 200.000 $ (2×), Deckel des Bots 190.000 $ |
 | 4 | Long 1 SPY, Verkauf 2 SPY MOC | **offen**: Fenster |
 | 5 | VIX im ersten Actions-`dry`-Lauf | **offen**: lokal kam der VIX von Yahoo query1. Auf GitHub-IPs zeigt es dein erster `dry`-Lauf in `STATUS-dry.md` („Quelle: …“) |
@@ -88,7 +91,7 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 
 ## Offen
 
-- Paper-Prüfungen 2, 4, 6: heute zwischen 21:30 und 21:49 MESZ. Ab 26.10. (MEZ, USA noch Sommerzeit) eine Stunde früher, 20:30–20:49. Befehl unten. **Vor dem ersten Live-Lauf**, weil die Test-Orders sonst den Positionsabgleich stören.
+- Paper-Prüfungen 2, 4, 6: Mo–Fr zwischen 21:30 und 21:49 MESZ, nächster Termin Fr 16.10. Ab 26.10. (MEZ, USA noch Sommerzeit) eine Stunde früher, 20:30–20:49. Befehl unten. **Vor dem ersten Live-Lauf**, weil die Test-Orders sonst den Positionsabgleich stören.
 - Prüfung 5 und der grüne Actions-`dry`-Lauf brauchen die Secrets.
 - Entscheidung zur Sperre auf der Kaufseite: Wenn Prüfung 6 die zweite Kauforder annimmt, genügt in `systembuch_bot.py` die Zeile `VORZEICHENWECHSEL_SPERRE = 'verkauf'`. Zwei Kauforders sind gebaut und getestet (Dauertest 2022 auf den Cent gleich dem Replay, Ablehnung der zweiten Order sauber abgefangen). TSMOM unter Live-Bedingungen: Sitzung mit dir, vorab festgeschriebener Test.
 - BB-Stop nach MOC-Kauf im selben Symbol: Wegen Alpacas Wash-Trade-Schutz bleibt das Leg bis zum nächsten Lauf ohne Stop (Replay: 227 Leg-Tage, Wirkung ≈ 0). Lückenlos ginge es nur mit einem Stop-Nachlauf um ≈ 16:05 ET, also außerhalb deines Orderfensters (Regel 4). Deine Entscheidung, nicht gebaut.
@@ -103,7 +106,7 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 2. **Secrets:** github.com/linusaaronstiegler-boop/Trading-bot- → *Settings* → *Secrets and variables* → *Actions* → *New repository secret*: `APCA_API_KEY_ID`, dann `APCA_API_SECRET_KEY`. Ohne Leerzeichen und Zeilenumbruch einfügen (sonst bricht der Bot mit „Sonderzeichen“ ab).
 3. **Schreibrechte:** *Settings* → *Actions* → *General* → *Workflow permissions* → **Read and write permissions** → *Save*.
 4. **Mergen:** Repo-Startseite → gelber Balken „claude/systembuch-v2 had recent pushes“ → *Compare & pull request* → *Create pull request* → *Merge pull request* → *Confirm merge*. Erst danach laufen Schedules und *Run workflow* für `systembuch-bot`.
-5. **Paper-Prüfungen** (lokal, vor dem ersten Live-Lauf, heute 21:30–21:49 MESZ):
+5. **Paper-Prüfungen** (lokal, vor dem ersten Live-Lauf, Mo–Fr 21:30–21:49 MESZ):
    `APCA_API_KEY_ID=… APCA_API_SECRET_KEY=… python3 werkzeuge/paper_pruefungen.py --orders`
    Das Ergebnis landet in `pruefungen-ergebnis.md`. Danach muss das Konto wieder flach sein (das Werkzeug räumt selbst auf). Alternativ kann ich das in einer neuen Sitzung zu der Uhrzeit machen.
 6. **Erster `dry`-Lauf:** *Actions* → *systembuch-bot* → *Run workflow* → Branch `main`, modus **dry** → *Run workflow*. Danach `STATUS-dry.md` im Repo öffnen: Signale, Netto-Orders, „Quelle:“ beim VIX (Prüfung 5), keine Warnungen. Der Lauf muss grün sein.

@@ -227,6 +227,8 @@ def laden():
             raise Abbruch('ABGLEICH NÖTIG', 'state.json aus v1 mit offenen Orders – bitte von Hand gegen Alpaca prüfen')
         for k in ('offene_orders', 'tag_zaehler'): st.pop(k, None)
         for l in st.get('legs', []): l.setdefault('status', 'offen'); l.setdefault('einstieg_datum', l['datum']); l.pop('order_id', None)
+    for l in st.get('legs', []):                                                         # v1 (23:15) vermerkt ausstieg_offen als Datum
+        if isinstance(l.get('ausstieg_offen'), str): l['ausstieg_offen'] = dict(grund='Ausstieg', datum=l['ausstieg_offen'])
     for k, v in ZUSTAND_NEU.items(): st.setdefault(k, json.loads(json.dumps(v)))
     st['version'] = 2
     return st
@@ -322,8 +324,11 @@ def abrechnen(st, heute, kal, schluss):
         for k in a['komponenten']:                                                       # Ausstieg nie größer als der Restbestand (Stop gefüllt)
             leg = legs.get(k['leg_id'])
             komps.append(dict(k, menge=min(k['menge'], leg['stueck']) if leg else 0) if k['art'] == 'aus' else k)
-        erledigt = verteile_fill(komps, F)
-        intern = verteile_fill(komps, 0)                                                # ohne Börse erledigt (Kauf gegen Verkauf im Symbol)
+        if a['menge'] and not F:                                                         # Order nicht ausgeführt (abgelehnt, nie angekommen, ohne Fill
+            erledigt = intern = [0] * len(komps)                                         # storniert): Symbol bleibt unverändert, auch der intern
+        else:                                                                            # verrechenbare Teil (wie v1 seit 15.10. 23:15, Review 3.5)
+            erledigt = verteile_fill(komps, F)
+            intern = verteile_fill(komps, 0)                                            # ohne Börse erledigt (Kauf gegen Verkauf im Symbol)
         for k, d, d0 in zip(komps, erledigt, intern):
             d0 = min(d0, d); boerse = d - d0
             # Preis je Komponente: intern Verrechnetes zum offiziellen Schluss, über die Börse Gehandeltes zum Fill
@@ -400,8 +405,10 @@ def stops_abrechnen(st, kal, legs):
 
 
 def positionen_lesen():
+    """Wie v1 (15.10. 23:15): nur Aktien/ETFs (`asset_class` us_equity) zählen – Krypto o. Ä. im selben Konto ist nicht Sache des Bots."""
     out = {}
     for p in alp('/v2/positions'):
+        if p.get('asset_class', 'us_equity') != 'us_equity': continue
         q = abs(float(p['qty'])) * (-1 if p.get('side') == 'short' else 1)
         out[p['symbol']] = dict(qty=int(round(q)), vortag=float(p.get('lastday_price') or 0), wert=float(p.get('market_value') or 0))
     return out
@@ -570,15 +577,7 @@ def senden(st, heute, kz, ausstiege, einstiege, orders, uhr, offene):
     finally:
         for leg, steigt_aus in neu_setzen:
             if steigt_aus or leg not in st['legs'] or not leg.get('einstieg') or leg.get('stop_order'): continue
-            menge = None
-            aus = leg.get('ausstieg') or {}
-            if aus and not aus.get('gesendet'):                                          # MOC nicht raus: intern Verrechnetes ist trotzdem weg
-                a = next((x for x in auftraege if x['symbol'] == leg['symbol']), None)
-                if a:
-                    erl = sum(d for k, d in zip(a['komponenten'], verteile_fill(a['komponenten'], 0)) if k['art'] == 'aus' and k['leg_id'] == leg['id'])
-                    menge = leg['stueck'] - erl
-                    if menge <= 0: log(f"BB-Stop {leg['symbol']}: Leg intern verrechnet – kein neuer Stop"); continue
-            stop_setzen(leg, heute, offene, menge)
+            stop_setzen(leg, heute, offene)                                              # MOC nicht raus → Leg bleibt ganz (Review 3.5) → voller Stop
         speichern(st)
     return fehler
 
