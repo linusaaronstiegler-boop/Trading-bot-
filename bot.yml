@@ -1,0 +1,50 @@
+name: systembuch-bot
+on:
+  schedule:
+    # K6 (15.10.2026): Entscheidung 15:45 ET. Der Lauf startet früh (Cron-Verzug bei GitHub bis 15 Min) und wartet im Bot bis 15:45.
+    - cron: '28 19 * * 1-5'   # 15:28 New York bei US-Sommerzeit (EDT)
+    - cron: '28 20 * * 1-5'   # 15:28 New York bei US-Winterzeit (EST); der jeweils falsche Lauf beendet sich sofort ("kein Fenster")
+    - cron: '40 19 * * 1-5'   # Nachläufer 15:40 EDT, falls der erste Lauf verzögert/ausgefallen ist (`letzter_lauf` verhindert Doppelhandel)
+    - cron: '40 20 * * 1-5'   # Nachläufer 15:40 EST
+    - cron: '28 17 27 11 *'   # Halbtag 27.11.2026 (Schluss 13:00 ET = MW-Kauftag!) – 12:28 ET
+    - cron: '28 17 24 12 *'   # Halbtag 24.12.2026 – 12:28 ET
+  workflow_dispatch:
+    inputs:
+      modus:
+        description: 'dry = nur rechnen (auch außerhalb des Fensters), live = handeln'
+        default: 'dry'
+permissions:
+  contents: write
+concurrency:
+  group: systembuch-bot
+  cancel-in-progress: false
+jobs:
+  lauf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Bot
+        env:
+          APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.modus }}" = "dry" ]; then
+            python3 systembuch_bot.py --dry --force
+          else
+            python3 systembuch_bot.py
+          fi
+      - name: Stand speichern
+        if: always()
+        run: |
+          git config user.name "systembuch-bot"
+          git config user.email "bot@users.noreply.github.com"
+          [ -f journal.csv ] || echo "id,strategie,symbol,richtung,stueck,einstieg,einstieg_datum,ausstieg,ausstieg_datum,pnl,grund" > journal.csv
+          for f in state.json journal.csv STATUS.md log.txt; do [ -f "$f" ] && git add -f -- "$f"; done
+          if ! git diff --cached --quiet; then
+            git commit -m "Lauf $(date -u +%F)"
+            for i in 1 2 3; do git pull --rebase origin main && git push && break || sleep 10; done
+          fi
