@@ -13,3 +13,10 @@ def lade_fixture(pfad):
 @pytest.fixture(params=FIXTURES, ids=[os.path.basename(p)[:-5] for p in FIXTURES])
 def tagesfixture(request):
     return lade_fixture(request.param)
+
+
+@pytest.fixture(autouse=True)
+def nichts_ins_repo_schreiben(monkeypatch):
+    """Direkt aufgerufene Bot-Funktionen (ohne main) schreiben sonst log.txt/state.json ins Arbeitsverzeichnis des Repos."""
+    import systembuch_bot
+    monkeypatch.setitem(systembuch_bot.AUSGABE, 'schreiben', False)
