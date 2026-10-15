@@ -76,11 +76,19 @@ def test_fixtures_decken_die_pfade_ab():
 
 
 def test_live_dry_lauf_v2_gleich_v1(tagesfixture, monkeypatch, tmp_path):
-    """Abnahme SPEC: `--dry --force` von v2 liefert auf der Fixture dieselben Netto-Orders wie v1."""
+    """Abnahme SPEC: `--dry --force` von v2 liefert auf der Fixture dieselben Netto-Orders wie v1.
+
+    Einzige gewollte Abweichung (Review 3.2): Würde ein Symbol heute durch null drehen, ordert v2 nur bis null.
+    Die Netto-Orders vor dieser Sperre (`roh`) sind identisch; danach weichen nur die gekreuzten Symbole ab, und zwar genau auf −Bestand."""
     import systembuch_bot as v2
     r1 = lauf_v1(tagesfixture, monkeypatch, tmp_path)
     r2 = live_dry_v2(v2, tagesfixture, monkeypatch, tmp_path)
-    assert r2['plan'] == r1['plan']
+    assert r2['roh'] == r1['plan']
+    bestand = {}
+    for l in tagesfixture['state']['legs']: bestand[l['symbol']] = bestand.get(l['symbol'], 0) + l['richtung'] * l['stueck']
+    for s in set(r1['plan']) | set(r2['plan']):
+        if s in r2['gekreuzt']: assert r2['plan'][s] == -bestand[s]
+        else: assert r2['plan'].get(s) == r1['plan'].get(s), s
 
 
 def live_dry_v2(v2, fx, monkeypatch, tmp_path):
