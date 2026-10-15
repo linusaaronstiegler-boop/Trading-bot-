@@ -5,9 +5,9 @@ Repo `linusaaronstiegler-boop/Trading-bot-` (= `systembuch-bot`), Branch **`clau
 ## Kurz
 
 - **v2 ist gebaut.** SPEC-v2 Aufgaben 1–7 sind erledigt, alle Befunde aus `REVIEW-v1.md` eingearbeitet, dazu ein zweiter feindseliger Review der v2. Die Regeln sind unverändert, es gibt kein LLM, der Live-Pfad braucht nur die Standardbibliothek.
-- **Live-Trockenlauf gegen dein Paper-Konto bestanden** (15.10., 17:34 ET): Alpaca-Daten, Kalender, Leihbarkeit und VIX sind lesbar, es wurde nichts gesendet und nur `STATUS-dry.md` geschrieben.
+- **Live-Trockenlauf gegen dein Paper-Konto bestanden** (15.10., 17:34 ET, mit dem Endstand noch einmal 18:39 ET): Alpaca-Daten, Kalender, Leihbarkeit und VIX sind lesbar, es wurde nichts gesendet und nur `STATUS-dry.md` geschrieben.
 - **Replay trifft K3 genau**, wenn er wie K3 rechnet: +12,0 % p.a., Sharpe 0,75, Maximalverlust 24,1 %. **So, wie der Bot bei Alpaca handeln kann: +10,2 % p.a., Sharpe 0,68, Maximalverlust 26,7 %.** Das ist kein Fehler, sondern der Preis der Vorzeichenwechsel-Sperre (siehe Abschnitt Replay).
-- **Offen:** Paper-Prüfungen 2, 4, 5 und 6 (brauchen das Orderfenster bzw. Actions), dein erster `dry`-Lauf in GitHub Actions und die Umstellung auf scharf.
+- **Offen:** Paper-Prüfungen 2, 4 und 6 (Termin Fr 16.10. 21:33 MESZ in dieser Sitzung gesetzt) und 5 (braucht Actions), dein erster `dry`-Lauf in GitHub Actions und die Umstellung auf scharf.
 
 ## Was gebaut wurde
 
@@ -24,8 +24,8 @@ Repo `linusaaronstiegler-boop/Trading-bot-` (= `systembuch-bot`), Branch **`clau
 | 7 Echtgeld | `ucits.md`: Gegenstücke mit ISIN/Xetra/TER/Spread, Brokerkosten inkl. Traders Place, Break-even-Rechnung, C40-Ergebnis | 4516f79 |
 | Review v2 | 1 Befund hoch, 5 mittel, 6 niedrig behoben (siehe unten) | c800706, ecc4c99 |
 | Paper | Live-Trockenlauf, Alpaca-Fixture, `assets.json`, Prüfungen 1 und 3 | 1647d41 |
-| Abschluss-Review | 6 Prüfer + Gegenprüfung je Befund (38 Agenten): 32 Befunde, 4 bestätigt und behoben, dazu 3 plausible günstig mitbehoben (siehe Review-Abschnitt) | 9874c89, fe45d75 |
 | v1-Stand 23:15 | Neue `SPEC-v2.md`, `REVIEW-v1.md`, v1-Referenz im Test ersetzt. Die drei v1-Fixes (Karfreitag 2027, Abgleich nur `us_equity` mit Exit 1 bzw. nur Meldung im dry, abgelehnte Order = Symbol unverändert + Exit 1) in v2 übernommen und **gegen v1 auf denselben Fixtures getestet** (`tests/test_v1_fixes.py`); v1 = v2 weiter auf allen 6 Tagen | 0a2a167 |
+| Abschluss-Review | 6 Prüfer + Gegenprüfung je Befund (38 Agenten): 32 Befunde, 4 bestätigt und behoben, dazu 2 plausible mitbehoben (siehe Review-Abschnitt) | 9874c89, fe45d75 |
 
 `bot.yaml` aus dem letzten Upload ist gleich dem ursprünglichen; `.github/workflows/bot.yml` bleibt die weiterentwickelte Fassung (Halbtage, dry/live-Auswahl, Artifact, Issue-Alarm).
 
@@ -45,9 +45,10 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 | Tresor ab 02.10.2023 | +17,1 %, Sharpe 1,06, DD 18,1 % | +16,8 %, 1,05, 18,1 % | +11,5 %, 0,87, 18,8 % |
 | Beitrag IBS / IBS-Land / VIX | +3,8 / +1,7 / +2,8 | +3,8 / +1,7 / +2,8 | +2,5 / +1,6 / +2,8 |
 | ohne TSMOM / ohne VIX / ohne MW-Land | +11,4 / +10,0 / +10,1 | +11,5 / +10,1 / +10,6 | **+11,4** / +8,1 / +10,0 |
+| VIX-Entscheidung mit Vortageswerten (pessimistische Schranke) | – | +11,1 | +9,3 |
 | Korrelation IBS/IBS-Land, MW/MW-Land | 0,63 / 0,72 | 0,63 / 0,72 | 0,63 / 0,73 |
 
-**Plausibilität:** Alle fett gedruckten Referenzwerte der SPEC treffen im K3-Modell auf ±2 %, auch die Einzelläufe (IBS allein +5,0 %, Sharpe 0,63; TSMOM Sharpe 0,54; VIX allein +3,1 %; nur IBS-Familie +7,9 %, Sharpe 0,73, DD 18,3 %) und die Jahresrenditen bis auf wenige Zehntel. Die Abweichung des Live-Modells von −15 % habe ich bis auf den Trade zurückverfolgt. Sie kommt fast ganz aus der Sperre auf der **Kaufseite** (short → long): TSMOM ist in Abwärtsphasen short SPY/QQQ/IWM, und genau dann will IBS kaufen. Mit Sperre nur auf der Verkaufsseite sind es +12,1 %. Das Live-Modell enthält auch die Wash-Trade-Lücke des BB-Stops (227 BB-Leg-Tage ohne Stop, Wirkung ≈ 0). **Unter Live-Bedingungen ist das Buch ohne TSMOM besser.** Das ist nur eine Beobachtung, entscheiden musst du (`replay/BEOBACHTUNGEN.md`). K6 ist nicht enthalten, live eher ≈ +9 % p.a. Abschaltkriterium K5 hätte auf keinem der beiden Pfade ausgelöst.
+**Plausibilität:** Alle fett gedruckten Referenzwerte der SPEC treffen im K3-Modell auf ±2 %, auch die Einzelläufe (IBS allein +5,0 %, Sharpe 0,63; TSMOM Sharpe 0,54; VIX allein +3,1 %; nur IBS-Familie +7,9 %, Sharpe 0,73, DD 18,3 %) und die Jahresrenditen bis auf wenige Zehntel. Die Abweichung des Live-Modells von −15 % habe ich bis auf den Trade zurückverfolgt. Sie kommt fast ganz aus der Sperre auf der **Kaufseite** (short → long): TSMOM ist in Abwärtsphasen short SPY/QQQ/IWM, und genau dann will IBS kaufen. Mit Sperre nur auf der Verkaufsseite sind es +12,1 %. Das Live-Modell enthält auch die Wash-Trade-Lücke des BB-Stops (227 BB-Leg-Tage ohne Stop, Wirkung ≈ 0). **Unter Live-Bedingungen ist das Buch ohne TSMOM besser.** Das ist nur eine Beobachtung, entscheiden musst du (`replay/BEOBACHTUNGEN.md`). K6 ist nicht enthalten, live eher ≈ +9 % p.a. Der VIX entscheidet im Replay wie in K3 mit dem 16:15-Schluss statt um 15:45; im ungünstigsten Fall kostet das knapp 1 Punkt (Tabellenzeile oben). Abschaltkriterium K5 hätte auf keinem der beiden Pfade ausgelöst.
 
 ## Entscheidungen, die ich ohne Rückfrage getroffen habe
 
