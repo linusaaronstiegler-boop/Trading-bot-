@@ -142,3 +142,26 @@ def test_wechsel_short_long_mit_zwei_kauforders(monkeypatch, tmp_path, alpaca_ni
     st = zustand(tmp_path)
     assert 'ABGLEICH' not in open(tmp_path / 'STATUS.md').read()                       # Folgelauf: Legs = Positionen nach Abrechnung
     if alpaca_nimmt_an: assert any(l['symbol'] == 'IWM' and l['strategie'] == 'IBS' and l['einstieg_datum'] == '2025-11-20' for l in st['legs'])
+
+
+def test_snapshot_verwirft_werte_vom_vortag():
+    iex = {'EWL': {'latestTrade': {'p': 50.0, 't': '2026-10-14T19:59:00Z'}, 'dailyBar': {'h': 51, 'l': 49, 't': '2026-10-14T04:00:00Z'}},
+           'SPY': {'latestTrade': {'p': 700.0, 't': '2026-10-15T19:44:00Z'}, 'dailyBar': {'h': 705, 'l': 690, 't': '2026-10-15T04:00:00Z'}}}
+    sip = {'EWL': {'dailyBar': {'h': 52, 'l': 48, 't': '2026-10-14T04:00:00Z'}}, 'SPY': {'dailyBar': {'h': 706, 'l': 689, 't': '2026-10-15T04:00:00Z'}}}
+    r = v2.snapshot_zusammenfuehren(iex, sip, '2026-10-15')
+    assert 'EWL' not in r and r['SPY'] == dict(px=700.0, hi=706.0, lo=689.0)
+
+
+def test_bb_stop_nach_moc_kauf_erst_im_naechsten_lauf(monkeypatch, tmp_path):
+    """Alpaca Wash-Trade-Schutz: Bei offener MOC-Kauforder im Symbol keinen Sell-Stop setzen; Vermerk am Leg."""
+    import time
+    b, fx = broker(monkeypatch, tmp_path)
+    stop = b._order(dict(symbol='SPY', qty='40', side='sell', type='stop', time_in_force='gtc', stop_price='500', client_order_id='sb-stop-1-x-1'))
+    bb = dict(id=1, strategie='BB', symbol='SPY', richtung=1, stueck=40, datum='2025-02-20', einstieg=590.0, status='offen', stop_order=stop['id'], atr20=5)
+    st = json.loads(json.dumps(v2.ZUSTAND_NEU)); st['legs'] = [bb]; st['naechste_id'] = 2
+    ibs = dict(id=None, strategie='IBS', symbol='SPY', richtung=1, stueck=42, datum='2025-02-27', atr20=5)
+    uhr = dict(jetzt=v2.zeit('2025-02-27T19:45:00Z'), schluss=v2.zeit('2025-02-27T20:00:00Z'), mono=time.monotonic())
+    fehler = v2.senden(st, '2025-02-27', {'SPY': dict(px=585.0)}, [], [ibs], {'SPY': 42}, uhr, [dict(id=stop['id'], symbol='SPY', client_order_id='sb-stop-1-x-1')])
+    assert fehler == [] and b.orders[stop['id']]['status'] == 'canceled'
+    assert not [o for o in b.orders.values() if o['type'] == 'stop' and o['status'] == 'accepted']
+    assert bb.get('stop_fehlt_seit') == '2025-02-27' and not bb.get('stop_order')

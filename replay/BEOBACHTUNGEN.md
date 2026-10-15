@@ -8,22 +8,27 @@ Zahlen: `replay/BERICHT.md`, 04.01.2010 bis 14.10.2026, 100.000 $, 3 bp je Seite
 | | p.a. | Sharpe | Maximalverlust | Tresor ab 10/2023 |
 |---|---|---|---|---|
 | K3-Modell (ohne Sperre, = K3) | +12,0 % | 0,75 | 24,1 % | +16,8 % |
-| Sperre nur long → short | +12,1 % | 0,76 | 24,1 % | – |
-| Sperre beide Richtungen (live) | +10,2 % | 0,68 | 26,7 % | +11,7 % |
+| Sperre nur long → short | +12,1 % | 0,75 | 24,0 % | – |
+| Sperre beide Richtungen (live) | +10,2 % | 0,68 | 26,7 % | +11,5 % |
 
 - Alpaca kann eine Position nicht an einem Tag durch null drehen (Review 3.2). Für long → short ist das belegt (zweite Verkaufsorder: „insufficient qty“). Für short → long gibt es einen Forenbericht vom 23.12.2022 mit derselben Ablehnung auf der zweiten Kauforder ([forum.alpaca.markets/t/11413](https://forum.alpaca.markets/t/changing-short-to-long-get-insufficient-quantity-available-even-after-check-for-no-open-orders/11413)). Eine verbindliche Doku gibt es nicht. Der Bot sperrt deshalb beide Richtungen.
-- Die Sperre auf der Verkaufsseite kostet nichts. Der Verlust entsteht auf der Kaufseite: TSMOM ist in Abwärtsphasen short SPY/QQQ/IWM/EEM, und genau dann kauft IBS dieselben ETFs. IBS verdient in Abwärtsphasen am meisten. Die Sperre schneidet deshalb gezielt die besten IBS-Trades ab. Beispiel: QQQ am 09.11.2022 mit 13 statt ≈ 300 Stück, am 10.11. stieg QQQ um 7 %. 2022 bringt IBS mit Sperre −31.500 $, ohne +8.500 $, bei fast gleich vielen Trades (189 gegen 186).
-- Folgeeffekt: Das Konto fällt 2022 tiefer, die Bremse (×0,5) greift 2023–2025 an 79–91 % der Tage, und das Buch braucht bis Juni 2026 für ein neues Hoch (1.146 Handelstage).
-- Unter Live-Bedingungen ist **„ohne TSMOM“ besser als das Gesamtbuch**: +11,5 % gegen +10,2 % p.a., Sharpe 0,72 gegen 0,68. Im K3-Modell bringt TSMOM dagegen +0,5 Punkte.
+- Die Sperre auf der Verkaufsseite kostet nichts. Der Verlust entsteht auf der Kaufseite: TSMOM ist in Abwärtsphasen short SPY/QQQ/IWM/EEM, und genau dann kauft IBS dieselben ETFs. IBS verdient in Abwärtsphasen am meisten. Die Sperre schneidet deshalb gezielt die besten IBS-Trades ab. Beispiel: QQQ am 09.11.2022 mit 13 statt ≈ 300 Stück, am 10.11. stieg QQQ um 7 %. 2022 bringt IBS mit Sperre −32.100 $, ohne +8.500 $, bei fast gleich vielen Trades (189 gegen 186).
+- Folgeeffekt: Das Konto fällt 2022 tiefer, die Bremse (×0,5) greift 2023–2025 an 79–92 % der Tage, und das Buch braucht bis Juni 2026 für ein neues Hoch (1.146 Handelstage).
+- Unter Live-Bedingungen ist **„ohne TSMOM“ besser als das Gesamtbuch**: +11,4 % gegen +10,2 % p.a., Sharpe 0,72 gegen 0,68. Im K3-Modell bringt TSMOM dagegen +0,5 Punkte.
 
 Mögliche Wege, alle mit vorab festgeschriebenem Test zu entscheiden:
 1. Auf dem Paper-Konto prüfen, ob short → long mit zwei Kauf-MOC-Orders angenommen wird (Prüfung 6, `werkzeuge/paper_pruefungen.py --orders`). Wenn ja, in `systembuch_bot.py` `VORZEICHENWECHSEL_SPERRE = 'verkauf'` setzen. Der Live-Code ist dafür schon gebaut und geprüft: Der Dauertest 2022 mit zwei Kauforders ergibt auf den Cent dasselbe wie der Replay. Das ist eine Ausführungsfrage, keine Regeländerung. Ergebnis dann ≈ +12,1 % p.a.
 2. TSMOM in ein zweites Alpaca-Paper-Konto legen. Dann gibt es kein Netting zwischen TSMOM-Shorts und den Long-Strategien, und der Replay entspricht dem K3-Modell. Brutto-Deckel und Bremse müssten über beide Konten gerechnet werden.
 3. TSMOM streichen. Das wäre eine Regeländerung mit eigenem Test, und K4 hat Strukturvarianten bisher alle verworfen.
 
+## 1b. BB-Stop: Lücke durch Alpacas Wash-Trade-Schutz
+
+Kauft der Bot per MOC in einem Symbol, in dem ein BB-Leg liegt (IBS, Monatswechsel oder TSMOM in SPY/QQQ/DIA/IWM), muss der GTC-Sell-Stop vorher weg. Neu setzen lässt er sich erst, wenn die Kauforder ausgeführt ist: Alpaca lehnt gegenläufige Orders ab, wenn eine davon Market oder einfacher Stop ist. Der Bot setzt ihn deshalb im nächsten Lauf (15:28 ET) neu. Im Replay sind das 227 BB-Leg-Tage ohne Stop, die Wirkung ist ≈ 0 (+0,1 Punkte, Zufall).
+Lückenlos ginge es nur mit einem Stop-Nachlauf nach Börsenschluss (≈ 16:05 ET, eigener Cron). Das wäre eine Order außerhalb des Fensters nach Linus' Regel 4. Nicht gebaut, Entscheidung offen.
+
 ## 2. VIX-Contango trägt viel auf wenig Trades
 
-+2,8 Punkte p.a. (zweitgrößter Beitrag) aus 80 Trades mit 34 % Treffern und Ø +637 bp je Trade. Live ohne VIX: +7,9 % p.a. (K3-Modell +10,1 %). In der README steht die Regel als „Experiment“ (C16). Der Beitrag hängt an wenigen langen Haltephasen (Ø 41 Tage). Außerdem hat sich das Produkt geändert: SVXY war bis 27.02.2018 −1× und ist seitdem −0,5×.
++2,8 Punkte p.a. (zweitgrößter Beitrag) aus 80 Trades mit 34 % Treffern und Ø +637 bp je Trade. Live ohne VIX: +8,1 % p.a. (K3-Modell +10,1 %). In der README steht die Regel als „Experiment“ (C16). Der Beitrag hängt an wenigen langen Haltephasen (Ø 41 Tage). Außerdem hat sich das Produkt geändert: SVXY war bis 27.02.2018 −1× und ist seitdem −0,5×.
 
 ## 3. IBS-Sektor ist auf Trade-Ebene schwach
 
@@ -31,7 +36,7 @@ Mögliche Wege, alle mit vorab festgeschriebenem Test zu entscheiden:
 
 ## 4. Monatswechsel-Land
 
-Live +0,3 Punkte p.a. (Summe −1.600 $), im K3-Modell +0,6. Die Korrelation zu Monatswechsel liegt bei 0,72. Variante „ohne MW-Land“: live +9,8 % gegen +10,2 %, also für das Buch noch leicht positiv.
+Live +0,3 Punkte p.a. (Summe −4.400 $), im K3-Modell +0,6. Die Korrelation zu Monatswechsel liegt bei 0,72. Variante „ohne MW-Land“: live +10,0 % gegen +10,2 %, also für das Buch noch leicht positiv.
 
 ## 5. Was der Replay nicht zeigt
 

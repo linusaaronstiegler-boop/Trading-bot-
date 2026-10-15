@@ -119,10 +119,11 @@ def leihbarkeit():
 
 
 # ---------- Simulation ----------
-def simuliere(D, KZ, i0, i1, param=None, sperre='beide', kosten_bp=3.0, startkapital=100000.0, leihbar=None, kal=None):
+def simuliere(D, KZ, i0, i1, param=None, sperre='beide', kosten_bp=3.0, startkapital=100000.0, leihbar=None, kal=None, stop_luecke=None):
     """Tag für Tag: Bewertung → BB-Stops → kern.entscheide → kern.netto_orders → Ausführung zum Schluss.
     → dict(tage DataFrame, trades DataFrame, info)"""
     kosten = kosten_bp / 1e4
+    if stop_luecke is None: stop_luecke = sperre != 'aus'                                   # live: Wash-Trade-Lücke des BB-Stops, K3-Modell: keine
     cash = startkapital; legs = []; nid = 1; hwm = startkapital; letzte_tsmom = None; aufgeschoben = []; gestoppt = False
     zeilen, trades = [], []
     stat = dict(gekreuzt=0, verfallen=0, aufgeschoben=0, verfallen_stueck_wert=0.0, stopps=0)
@@ -151,7 +152,7 @@ def simuliere(D, KZ, i0, i1, param=None, sperre='beide', kosten_bp=3.0, startkap
             if np.isfinite(a):
                 neu = l['wert'] * a / l['adj']; pnl_s[l['strategie']] += l['richtung'] * (neu - l['wert']); l['wert'] = neu; l['adj'] = a
         # 2) BB-Stops (GTC ab t0+2 intraday; Fill min(Eröffnung, Stop))
-        for l in [l for l in legs if l['strategie'] == 'BB' and i >= l['i_ein'] + 2]:
+        for l in [l for l in legs if l['strategie'] == 'BB' and i >= l['i_ein'] + 2 and l.get('stop_pause') != i]:
             A = D.a[l['symbol']]
             if np.isfinite(A['l'][i]) and A['l'][i] <= l['stop']:
                 fill = min(A['o'][i], l['stop'])
@@ -173,6 +174,7 @@ def simuliere(D, KZ, i0, i1, param=None, sperre='beide', kosten_bp=3.0, startkap
             if kern.notaus(eq, startkapital):
                 aus = [(l, 'NOT-AUS') for l in legs]; ein = []; gestoppt = True
         no = kern.netto_orders(legs, aus, ein, sperre)
+        stat['stop_luecken'] = stat.get('stop_luecken', 0) + sum(1 for l in legs if l.get('stop_pause') == i)
         stat['gekreuzt'] += len(no['gekreuzt']); stat['verfallen'] += len(no['verfallen']); stat['aufgeschoben'] += len(no['aufgeschoben'])
         stat['verfallen_stueck_wert'] += sum(x['stueck'] * kz[x['symbol']]['px'] for x in no['verfallen'] if x['symbol'] in kz)
         # 4) Ausführung zum Schluss; Kosten auf das Netto-Volumen je Symbol, anteilig auf die beteiligten Legs
@@ -196,6 +198,9 @@ def simuliere(D, KZ, i0, i1, param=None, sperre='beide', kosten_bp=3.0, startkap
             if l['strategie'] == 'BB': leg['stop'] = round(px - kern.BB_STOP_ATR * l['atr20'], 2)
             nid += 1; cash -= l['richtung'] * wert + k; legs.append(leg)
         aufgeschoben = no['aufgeschoben'] + info.get('aufgeschoben_behalten', [])
+        if stop_luecke:                                                                    # live: MOC-Kauf im Symbol → Sell-Stop erst im nächsten Lauf
+            for l in legs:                                                                 # (Alpaca Wash-Trade-Schutz) → am Folgetag kein Stop
+                if l['strategie'] == 'BB' and no['orders'].get(l['symbol'], 0) > 0 and l['i_ein'] < i: l['stop_pause'] = i + 1
         if info.get('tsmom_tag'): letzte_tsmom = d
         eq_end = cash + sum(l['richtung'] * l['wert'] for l in legs)
         brutto = sum(l['stueck'] * D.a[l['symbol']]['c'][i] for l in legs if np.isfinite(D.a[l['symbol']]['c'][i]))
@@ -510,7 +515,7 @@ def bericht(a, R, tresor, st, ko, jr, leih_quelle):
         z.append(f"- **{m}:** Maximalverlust {pz1(k['max_dd'])} vom Höchststand {k['spitze']} bis {k['tief']} ({k['tage_bis_tief']} Handelstage), neues Hoch "
                  f"{k['erholt'] or 'noch nicht'} ({k['tage_bis_erholt'] or '–'} Handelstage ab Höchststand; K3: Tief 28.02.2020, 702). Alpha zu SPY {p(k['alpha'])} p.a. "
                  f"(t {zahl(k['alpha_t'])}), investiert an {k['investiert'] * 100:.0f} % der Tage, Ø Brutto {zahl(k['brutto_avg'])}× (max {zahl(k['brutto_max'])}×), "
-                 f"Bremse an {k['bremse_tage'] * 100:.0f} % der Tage, {k['stopps']} BB-Stopps.")
+                 f"Bremse an {k['bremse_tage'] * 100:.0f} % der Tage, {k['stopps']} BB-Stopps" + (f", {k.get('stop_luecken', 0)} BB-Leg-Tage ohne Stop (Wash-Trade-Lücke)." if m == 'live' else '.'))
     z += ['', '## Jahresrenditen', '', '| Jahr | live | K3-Modell | K3 |', '|---|---|---|---|']
     for j, r in jr.iterrows(): z.append(f"| {j} | {p(r['live'])} | {p(r['k3']) if 'k3' in r else '–'} | {p(r['K3'])} |")
     z += ['', '## Beitrag je Strategie (live)', '',

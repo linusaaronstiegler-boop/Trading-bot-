@@ -146,20 +146,31 @@ def snapshots(symbols):
     iex = alp(f'/v2/stocks/snapshots?symbols={",".join(symbols)}&feed=iex', base=DATA)
     try: sip = alp(f'/v2/stocks/snapshots?symbols={",".join(symbols)}&feed=delayed_sip', base=DATA)
     except Exception as e: sip = {}; log(f'delayed_sip nicht verfügbar – Hoch/Tief nur aus IEX ({str(e)[:80]})')
-    return snapshot_zusammenfuehren(iex, sip)
+    return snapshot_zusammenfuehren(iex, sip, dt.datetime.now(NY).date().isoformat())
 
 
-def snapshot_zusammenfuehren(iex, sip):
+def _ny_datum(t):
+    try: return zeit(t).astimezone(NY).date().isoformat()
+    except Exception: return None
+
+
+def snapshot_zusammenfuehren(iex, sip, heute=None):
+    """Jüngster Trade als Kurs, Hoch/Tief aus beiden Tageskerzen. Werte, deren Zeitstempel nicht von heute (New York) ist,
+    werden verworfen (Review v2: sonst mischt ein ETF ohne heutigen Trade Vortageswerte ins IBS)."""
     out = {}
+    heute_ok = lambda x: heute is None or not x.get('t') or _ny_datum(x['t']) == heute
     for s in set(iex) | set(sip):
         vi, vs = iex.get(s) or {}, sip.get(s) or {}
-        kandidaten = [(t.get('t') or '', float(t['p'])) for t in ((vi.get('latestTrade') or {}), (vs.get('latestTrade') or {})) if t.get('p')]
+        trades = [t for t in ((vi.get('latestTrade') or {}), (vs.get('latestTrade') or {})) if t.get('p') and heute_ok(t)]
+        kandidaten = [(t.get('t') or '', float(t['p'])) for t in trades]
         px = max(kandidaten)[1] if kandidaten else None                                   # jüngster Trade gewinnt
         q = vi.get('latestQuote') or {}
-        if px is None and q.get('ap') and q.get('bp'): px = (float(q['ap']) + float(q['bp'])) / 2
-        if px is None: continue
-        his = [float(b['h']) for b in ((vi.get('dailyBar') or {}), (vs.get('dailyBar') or {})) if b.get('h')]
-        los = [float(b['l']) for b in ((vi.get('dailyBar') or {}), (vs.get('dailyBar') or {})) if b.get('l')]
+        if px is None and q.get('ap') and q.get('bp') and heute_ok(q): px = (float(q['ap']) + float(q['bp'])) / 2
+        if px is None:
+            if heute is not None and (vi or vs): log(f'WARNUNG: {s} ohne Kurs von heute – heute kein Signal/Ausstieg in {s}')
+            continue
+        bars_ = [b for b in ((vi.get('dailyBar') or {}), (vs.get('dailyBar') or {})) if heute_ok(b)]
+        his = [float(b['h']) for b in bars_ if b.get('h')]; los = [float(b['l']) for b in bars_ if b.get('l')]
         out[s] = dict(px=px, hi=max(his + [px]), lo=min(los + [px]))
     return out
 
@@ -414,7 +425,7 @@ def hwm_pruefen(st, reihe, eq):
     kand = [st.get('hwm') or 0, eq] + reihe
     try:
         if st.get('start'):
-            ph = alp(f"/v2/account/portfolio/history?timeframe=1D&start={st['start']}")
+            ph = alp(f"/v2/account/portfolio/history?timeframe=1D&start={st['start']}&end={dt.datetime.now(NY).date().isoformat()}")  # ohne end nur 1 Monat
             kand += [e for e in (ph.get('equity') or []) if e]
     except Exception as ex: log(f'WARNUNG: Höchststand nicht gegen Alpaca prüfbar ({str(ex)[:60]})')
     hwm = max(kand)
@@ -500,7 +511,7 @@ def stop_setzen(leg, heute, offene=()):
         try: o = alp('/v2/orders', body, 'POST', tries=1)
         except Abgelehnt: raise
         except Exception: o = alp(f'/v2/orders:by_client_order_id?client_order_id={urllib.parse.quote(cid)}', tries=3)
-        leg['stop_order'] = o['id']; leg['stop'] = stop; leg.pop('stop_gefuellt', None); log(f"BB-Stop {leg['symbol']} {qty} @ {stop}")
+        leg['stop_order'] = o['id']; leg['stop'] = stop; leg.pop('stop_gefuellt', None); leg.pop('stop_fehlt_seit', None); log(f"BB-Stop {leg['symbol']} {qty} @ {stop}")
         return True
     except Exception as e:
         log(f"WARNUNG: BB-Stop {leg['symbol']} nicht gesetzt ({schwaerzen(e)[:120]}) – nächster Lauf versucht es erneut"); return False
@@ -579,6 +590,11 @@ def auftrag_senden(st, a, uhr, offene, neu_setzen):
         if a.get('zweite'): a['zweite']['status'] = 'abgelehnt'
         return [f'ORDER ABGELEHNT {s} {d:+d}: {schwaerzen(e)[:160]}']
     a.update(order_id=o['id'], status='gesendet')
+    if d > 0:                                                                            # offene MOC-Kauforder: Alpaca lehnt jeden Sell-Stop im Symbol ab
+        for i, (leg, aus) in enumerate(neu_setzen):                                      # (Wash-Trade-Schutz) → Stop erst im nächsten Lauf neu setzen
+            if leg['symbol'] == s and not aus:
+                neu_setzen[i] = (leg, True); leg['stop_fehlt_seit'] = a['datum']
+                log(f"BB-Stop {s}: bis zum nächsten Lauf ohne Stop (Alpaca Wash-Trade-Schutz bei offener MOC-Kauforder)")
     zusatz = []
     if a.get('zweite'):                                                                  # zweite Kauforder: neue Long-Position
         z = a['zweite']; m = minuten_bis_schluss_jetzt(uhr)

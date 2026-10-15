@@ -33,17 +33,17 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 |---|---|---|---|
 | Rendite p.a. | +12,0 % | +12,0 % | **+10,2 %** |
 | Schwankung | 17,0 % | 17,0 % | 16,2 % |
-| Sharpe / Sortino | 0,75 / 1,07 | 0,75 / 1,08 | 0,68 / 0,96 |
+| Sharpe / Sortino | 0,75 / 1,07 | 0,75 / 1,08 | 0,68 / 0,97 |
 | Maximalverlust | 24,1 % (Tief 28.02.2020, 702 Tage) | 24,1 % (28.02.2020, 703 Tage) | 26,7 % (Nov. 2021 → Apr. 2025, neues Hoch 06/2026) |
-| Endwert | ≈ 669.000 $ | 672.000 $ | 505.000 $ |
-| Kosten / Trades p.a. / Ø Legs | 208.600 $ / 745 / 14,5 | 211.000 $ / 746 / 14,5 | 169.000 $ / 795 / 16,0 |
-| Beta zu SPY / Alpha | 0,74 / +1,9 % | 0,74 / +1,8 % (t 0,66) | 0,69 / +0,8 % (t 0,30) |
-| Tresor ab 02.10.2023 | +17,1 %, Sharpe 1,06, DD 18,1 % | +16,8 %, 1,05, 18,1 % | +11,7 %, 0,89, 18,8 % |
+| Endwert | ≈ 669.000 $ | 672.000 $ | 511.000 $ |
+| Kosten / Trades p.a. / Ø Legs | 208.600 $ / 745 / 14,5 | 211.000 $ / 746 / 14,5 | 172.000 $ / 794 / 16,0 |
+| Beta zu SPY / Alpha | 0,74 / +1,9 % | 0,74 / +1,8 % (t 0,66) | 0,69 / +0,9 % (t 0,33) |
+| Tresor ab 02.10.2023 | +17,1 %, Sharpe 1,06, DD 18,1 % | +16,8 %, 1,05, 18,1 % | +11,5 %, 0,87, 18,8 % |
 | Beitrag IBS / IBS-Land / VIX | +3,8 / +1,7 / +2,8 | +3,8 / +1,7 / +2,8 | +2,5 / +1,6 / +2,8 |
-| ohne TSMOM / ohne VIX / ohne MW-Land | +11,4 / +10,0 / +10,1 | +11,5 / +10,1 / +10,6 | **+11,5** / +7,9 / +9,8 |
+| ohne TSMOM / ohne VIX / ohne MW-Land | +11,4 / +10,0 / +10,1 | +11,5 / +10,1 / +10,6 | **+11,4** / +8,1 / +10,0 |
 | Korrelation IBS/IBS-Land, MW/MW-Land | 0,63 / 0,72 | 0,63 / 0,72 | 0,63 / 0,73 |
 
-**Plausibilität:** Alle fett gedruckten Referenzwerte der SPEC treffen im K3-Modell auf ±2 %, auch die Einzelläufe (IBS allein +5,0 %, Sharpe 0,63; TSMOM Sharpe 0,54; VIX allein +3,1 %; nur IBS-Familie +7,9 %, Sharpe 0,73, DD 18,3 %) und die Jahresrenditen bis auf wenige Zehntel. Die Abweichung des Live-Modells von −15 % habe ich bis auf den Trade zurückverfolgt. Sie kommt fast ganz aus der Sperre auf der **Kaufseite** (short → long): TSMOM ist in Abwärtsphasen short SPY/QQQ/IWM, und genau dann will IBS kaufen. Mit Sperre nur auf der Verkaufsseite sind es +12,1 %. **Unter Live-Bedingungen ist das Buch ohne TSMOM besser.** Das ist nur eine Beobachtung, entscheiden musst du (`replay/BEOBACHTUNGEN.md`). K6 ist nicht enthalten, live eher ≈ +9 % p.a. Abschaltkriterium K5 hätte auf keinem der beiden Pfade ausgelöst.
+**Plausibilität:** Alle fett gedruckten Referenzwerte der SPEC treffen im K3-Modell auf ±2 %, auch die Einzelläufe (IBS allein +5,0 %, Sharpe 0,63; TSMOM Sharpe 0,54; VIX allein +3,1 %; nur IBS-Familie +7,9 %, Sharpe 0,73, DD 18,3 %) und die Jahresrenditen bis auf wenige Zehntel. Die Abweichung des Live-Modells von −15 % habe ich bis auf den Trade zurückverfolgt. Sie kommt fast ganz aus der Sperre auf der **Kaufseite** (short → long): TSMOM ist in Abwärtsphasen short SPY/QQQ/IWM, und genau dann will IBS kaufen. Mit Sperre nur auf der Verkaufsseite sind es +12,1 %. Das Live-Modell enthält auch die Wash-Trade-Lücke des BB-Stops (227 BB-Leg-Tage ohne Stop, Wirkung ≈ 0). **Unter Live-Bedingungen ist das Buch ohne TSMOM besser.** Das ist nur eine Beobachtung, entscheiden musst du (`replay/BEOBACHTUNGEN.md`). K6 ist nicht enthalten, live eher ≈ +9 % p.a. Abschaltkriterium K5 hätte auf keinem der beiden Pfade ausgelöst.
 
 ## Entscheidungen, die ich ohne Rückfrage getroffen habe
 
@@ -69,7 +69,8 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 **Review v2 (feindselig, 15.10. 23:00, mit Gegenprüfung):**
 - **Hoch:** Ein Nachläufer mit veraltetem Checkout hätte die MOC-Orders des ersten Laufs storniert und neu gesendet. ✔ Jetzt gilt: Gibt es heutige Bot-Orders bei Alpaca, die `state.json` nicht kennt, endet der Lauf ohne Änderung. Eigene MOC-Orders werden nie storniert, der Checkout holt den aktuellen Stand.
 - **Mittel:** Not-Aus mit abgelehnter Order (✔ Abwicklung bis glatt) · TSMOM nach Abbruch (✔ alle Aufträge vorab gespeichert, Nachholen) · Schlüssel mit Zeilenumbruch landete im Log (✔ geprüft und geschwärzt) · Verbindungsabbruch nach dem Senden (✔ Nachschau per client_order_id) · BB-Stop ohne client_order_id (✔ übernehmen statt verdoppeln).
-- **Niedrig:** BB-Höchstzahl ✔ · Aufschub ohne Kurs ✔ · Not-Aus vor dem Abgleich ✔ · Storno-Ausnahme ✔ · Uhr direkt vor dem POST ✔ · Wartezeit abzüglich Vorbereitung ✔.
+- **Niedrig:** BB-Höchstzahl ✔ · Aufschub ohne Kurs ✔ · Not-Aus vor dem Abgleich ✔ · Storno-Ausnahme ✔ · Uhr direkt vor dem POST ✔ · Wartezeit abzüglich Vorbereitung ✔ · Höchststand-Historie nur 1 Monat ✔ · veraltete Snapshot-Kerze ✔.
+- **Hoch (Prüfer Abrechnung):** BB-Stop nach MOC-Kauf im Symbol wird von Alpaca abgelehnt (Wash-Trade-Schutz). ✔ teilweise: Der Bot setzt den Stop jetzt bewusst erst im nächsten Lauf neu, statt eine Ablehnung zu provozieren, und der Replay bildet die Lücke ab (Wirkung ≈ 0). Lückenlos nur mit Nachlauf außerhalb des Fensters (offen, siehe oben).
 
 ## Paper-Prüfungen (REVIEW-v1 §8)
 
@@ -89,6 +90,7 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 - Paper-Prüfungen 2, 4, 6: heute zwischen 21:30 und 21:49 MESZ. Ab 26.10. (MEZ, USA noch Sommerzeit) eine Stunde früher, 20:30–20:49. Befehl unten. **Vor dem ersten Live-Lauf**, weil die Test-Orders sonst den Positionsabgleich stören.
 - Prüfung 5 und der grüne Actions-`dry`-Lauf brauchen die Secrets.
 - Entscheidung zur Sperre auf der Kaufseite: Wenn Prüfung 6 die zweite Kauforder annimmt, genügt in `systembuch_bot.py` die Zeile `VORZEICHENWECHSEL_SPERRE = 'verkauf'`. Zwei Kauforders sind gebaut und getestet (Dauertest 2022 auf den Cent gleich dem Replay, Ablehnung der zweiten Order sauber abgefangen). TSMOM unter Live-Bedingungen: Sitzung mit dir, vorab festgeschriebener Test.
+- BB-Stop nach MOC-Kauf im selben Symbol: Wegen Alpacas Wash-Trade-Schutz bleibt das Leg bis zum nächsten Lauf ohne Stop (Replay: 227 Leg-Tage, Wirkung ≈ 0). Lückenlos ginge es nur mit einem Stop-Nachlauf um ≈ 16:05 ET, also außerhalb deines Orderfensters (Regel 4). Deine Entscheidung, nicht gebaut.
 - Randfall: Ein BB-Long und ein TSMOM-Short im selben ETF mit netto Short-Bestand. Dann ist der GTC-Stop des BB-Legs bei Alpaca ein Leerverkaufs-Stop. Lehnt Alpaca ihn ab, gibt es eine Warnung im STATUS, und der Stop fehlt bis zum Ausstieg.
 - Review 1.7 (BB-Signal am Ex-Dividenden-Tag): beobachten, wenn SPY ex geht.
 - K4-Variante „TSMOM-Reservierung“: Auslegung prüfen (Entscheidung 11).
