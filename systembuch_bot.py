@@ -26,14 +26,8 @@ from zoneinfo import ZoneInfo
 
 NY = ZoneInfo('America/New_York')
 PAPER = 'https://paper-api.alpaca.markets'; DATA = 'https://data.alpaca.markets'
-INDEX = ('SPY', 'QQQ', 'DIA', 'IWM')
-SEKTOREN = ('XLB', 'XLE', 'XLF', 'XLI', 'XLK', 'XLP', 'XLU', 'XLV', 'XLY')
-LAENDER = ('EWG', 'EWJ', 'EWU', 'EWA', 'EWH', 'EWC', 'EWY', 'EWT', 'EWZ', 'EWL', 'EWQ', 'EWP', 'EFA', 'EEM')
-MW_LAND = LAENDER[:12]
-TSMOM = ('SPY', 'QQQ', 'IWM', 'EFA', 'EEM', 'EWJ', 'EWG', 'TLT', 'IEF', 'LQD', 'HYG', 'GLD', 'SLV', 'USO', 'DBC', 'DBA', 'UNG', 'UUP', 'FXE', 'VNQ')
-GROESSE = dict(IBS=0.25, IBS_SEKTOR=0.11, IBS_LAND=0.07, BB=0.25, MW=0.25, MW_LAND=0.04, VIX=0.10)
-MAX_OFFEN = dict(IBS_SEKTOR=4, IBS_LAND=4, BB=4)
-TSMOM_BRUTTO_MAX = 0.60; MAX_BRUTTO = 1.9; BREMSE_DD = 0.15; NOTAUS = 0.70
+from kern import (INDEX, SEKTOREN, LAENDER, MW_LAND, TSMOM, GROESSE, MAX_OFFEN, TSMOM_BRUTTO_MAX, MAX_BRUTTO, BREMSE_DD, NOTAUS,
+                  VORRANG, kennzahlen, tsmom_gewichte, entscheide, netto_plan, Kalender)
 # Lauffenster (Studie K6, 15.10.2026): Das IBS-Signal 15 Min vor Schluss behält 91 % des Schluss-Ertrags, 30 Min vor Schluss nur 46 %.
 # Der Lauf darf früh starten (Cron-Verzug bei GitHub), WARTET aber bis ENTSCHEIDUNG_MIN vor Schluss, lädt dann erst die Kurse
 # und sendet die MOC-Orders sofort; Alpaca lehnt `cls` nach 15:50 ET ab, deshalb harter Abbruch unter ORDER_SPAETESTENS_MIN.
@@ -43,7 +37,6 @@ START_SPAETESTENS_MIN = 11.5 # später gestartete Läufe handeln nicht mehr (Nac
 ORDER_SPAETESTENS_MIN = 10.5 # vor der Orderschleife Uhr erneut lesen; darunter keine Orders (MOC-Annahmeschluss 15:50 ET)
 FEIERTAGE = {'2026-11-26', '2026-12-25', '2027-01-01', '2027-01-18', '2027-02-15', '2027-04-02', '2027-05-31', '2027-06-18', '2027-07-05', '2027-09-06', '2027-11-25', '2027-12-24'}
 HALBE_TAGE = {'2026-11-27', '2026-12-24', '2027-11-26'}
-VORRANG = ('IBS', 'MW', 'BB', 'IBS_SEKTOR', 'IBS_LAND', 'TSMOM', 'MW_LAND', 'VIX')
 
 # ---------- Infrastruktur ----------
 def log(msg):
@@ -99,13 +92,6 @@ def yahoo_live(sym):
     r = urllib.request.Request(f'https://query1.finance.yahoo.com/v8/finance/chart/{sym}?range=1d&interval=5m', headers={'User-Agent': 'Mozilla/5.0'})
     return json.load(urllib.request.urlopen(r, timeout=25))['chart']['result'][0]['meta']['regularMarketPrice']
 
-def handelstage(jahr, monat):
-    d = dt.date(jahr, monat, 1); out = []
-    while d.month == monat:
-        if d.weekday() < 5 and d.isoformat() not in FEIERTAGE: out.append(d)
-        d += dt.timedelta(days=1)
-    return out
-
 # ---------- Zustand ----------
 def laden():
     if os.path.exists('state.json'): return json.load(open('state.json'))
@@ -120,34 +106,6 @@ def journal(leg, ausstieg, grund, heute):
         if neu: w.writerow(['id', 'strategie', 'symbol', 'richtung', 'stueck', 'einstieg', 'einstieg_datum', 'ausstieg', 'ausstieg_datum', 'pnl', 'grund'])
         pnl = (ausstieg - leg['einstieg']) * leg['stueck'] * leg['richtung'] if leg.get('einstieg') and ausstieg else ''
         w.writerow([leg['id'], leg['strategie'], leg['symbol'], leg['richtung'], leg['stueck'], leg.get('einstieg'), leg['datum'], ausstieg, heute, round(pnl, 2) if pnl != '' else '', grund])
-
-# ---------- Signale ----------
-def kennzahlen(hist, live):
-    """Pro Symbol: IBS heute, SMA200/SMA20/BB-unten (mit heutigem Kurs als letztem Schluss), ATR20, 12M-Rendite, Vol60."""
-    out = {}
-    for s, rows in hist.items():
-        if s not in live or len(rows) < 60: continue
-        px = live[s]['px']; hi = max(live[s]['hi'], px); lo = min(live[s]['lo'], px)      # IEX-Tagesbar hinkt dem letzten Kurs nach
-        closes = [r[4] for r in rows] + [px]
-        hs = [r[2] for r in rows]; ls = [r[3] for r in rows]; cs = [r[4] for r in rows]
-        tr = [max(hs[i] - ls[i], abs(hs[i] - cs[i - 1]), abs(ls[i] - cs[i - 1])) for i in range(1, len(rows))]
-        k = dict(px=px, hi=hi, lo=lo, ibs=min(1.0, max(0.0, (px - lo) / (hi - lo))) if hi > lo else 0.5, atr20=sum(tr[-20:]) / 20,
-                 sma20=sum(closes[-20:]) / 20, sma200=sum(closes[-200:]) / 200 if len(closes) >= 200 else None)
-        sd20 = (sum((c - k['sma20']) ** 2 for c in closes[-20:]) / 19) ** 0.5
-        k['bb_unten'] = k['sma20'] - 2 * sd20
-        if len(closes) >= 253:
-            k['ret12'] = closes[-1] / closes[-253] - 1
-            rets = [closes[i] / closes[i - 1] - 1 for i in range(len(closes) - 60, len(closes))]
-            mu = sum(rets) / 60; k['vol60'] = (sum((x - mu) ** 2 for x in rets) / 59) ** 0.5 * 252 ** 0.5
-        out[s] = k
-    return out
-
-def tsmom_gewichte(kz):
-    roh = {s: (1 if kz[s]['ret12'] > 0 else -1) * min(0.10 / max(kz[s]['vol60'], 0.02), 2.0) for s in TSMOM if s in kz and 'ret12' in kz[s]}
-    summe = sum(abs(w) for w in roh.values()); f1 = min(1.0, 4.0 / summe) if summe else 1.0
-    ziel = {s: w * f1 * 0.36 for s, w in roh.items()}
-    brutto = sum(abs(w) for w in ziel.values()); f3 = min(1.0, TSMOM_BRUTTO_MAX / brutto) if brutto else 1.0
-    return {s: w * f3 for s, w in ziel.items()}
 
 # ---------- Hauptlauf ----------
 def main():
@@ -217,79 +175,22 @@ def main():
     # 3) Daten
     alle = sorted(set(INDEX + SEKTOREN + LAENDER + TSMOM + ('SVXY',)))
     hist = bars(alle); live = snapshots(alle); kz = kennzahlen(hist, live)
-    try: vix, vix3m = yahoo_live('^VIX'), yahoo_live('^VIX3M'); ratio = vix3m / vix
-    except Exception as e: vix = vix3m = ratio = None; log(f'VIX nicht lesbar: {str(e)[:80]}')
-    tage = handelstage(heute.year, heute.month)
-    mw_kauf = len(tage) >= 2 and heute == tage[-2]; mw_verkauf = len(tage) >= 3 and heute == tage[2]; tsmom_tag = bool(tage) and heute == tage[-1]
-    handelstag_nr = {d: i for i, d in enumerate(tage)}
-    log(f'Signale: MW-Kauf {mw_kauf}, MW-Verkauf {mw_verkauf}, TSMOM {tsmom_tag}, VIX3M/VIX {ratio and round(ratio, 3)}')
-
-    # 4) Ausstiege (bestehende Legs)
-    schliessen = []
-    for leg in st['legs']:
-        s, k = leg['symbol'], kz.get(leg['symbol'])
-        if k is None: continue
-        if leg['strategie'] in ('IBS', 'IBS_SEKTOR', 'IBS_LAND') and leg['datum'] < heute.isoformat():
-            if k['ibs'] >= 0.2: schliessen.append((leg, 'IBS Ausstieg Folgetag'))
-            else: leg['datum'] = heute.isoformat()                                       # Folgesignal: halten, Tag neu zählen
-        elif leg['strategie'] == 'BB':
-            alter = sum(1 for d in handelstage_zwischen(dt.date.fromisoformat(leg['datum']), heute))
-            if k['px'] > k['sma20']: schliessen.append((leg, 'BB über SMA20'))
-            elif alter >= 15: schliessen.append((leg, 'BB Tag 15'))
-        elif leg['strategie'] in ('MW', 'MW_LAND') and mw_verkauf: schliessen.append((leg, 'Monatswechsel Verkauf'))
-        elif leg['strategie'] == 'TSMOM' and tsmom_tag: schliessen.append((leg, 'TSMOM Umschichtung'))
-        elif leg['strategie'] == 'VIX' and ratio is not None and ratio < 1.0: schliessen.append((leg, 'VIX Backwardation'))
-
-    # 5) Einstiege (nach Vorrang, mit Brutto-Deckel)
-    neu = []
-    def brutto(legs_liste):
-        return sum(abs(l['stueck'] * kz.get(l['symbol'], {}).get('px', l.get('einstieg') or 0)) for l in legs_liste)
-    bleibende = [l for l in st['legs'] if l not in [x[0] for x in schliessen]]
-    offen = lambda strat: [l for l in bleibende + neu if l['strategie'] == strat]
-    def plane(strat, sym, richtung, anteil, extra=None):
-        if sym not in kz: return
-        nominal = anteil * eq * faktor
-        if brutto(bleibende + neu) + nominal > MAX_BRUTTO * eq: log(f'{strat} {sym}: Brutto-Deckel, übersprungen'); return
-        st_ = int(nominal / kz[sym]['px'])
-        if st_ < 1: return
-        leg = dict(id=None, strategie=strat, symbol=sym, richtung=richtung, stueck=st_, einstieg=None, datum=heute.isoformat(), atr20=round(kz[sym]['atr20'], 4))
-        if extra: leg.update(extra)
-        neu.append(leg)
-    index_signal = any(kz[s]['ibs'] < 0.2 for s in INDEX if s in kz)
-    for s in INDEX:
-        if s in kz and kz[s]['ibs'] < 0.2 and not any(l['symbol'] == s for l in offen('IBS')): plane('IBS', s, 1, GROESSE['IBS'])
-    if mw_kauf:
-        for s in INDEX:
-            if s in kz and not any(l['symbol'] == s for l in offen('MW')): plane('MW', s, 1, GROESSE['MW'])
-    for s in INDEX:
-        k = kz.get(s)
-        if k and k['sma200'] and k['px'] > k['sma200'] and k['px'] < k['bb_unten'] and len(offen('BB')) < MAX_OFFEN['BB'] and not any(l['symbol'] == s for l in offen('BB')):
-            plane('BB', s, 1, GROESSE['BB'])
-    if not index_signal and not offen('IBS'):
-        for s in sorted([s for s in SEKTOREN if s in kz and kz[s]['ibs'] < 0.2], key=lambda s: kz[s]['ibs']):
-            if len(offen('IBS_SEKTOR')) < MAX_OFFEN['IBS_SEKTOR'] and not any(l['symbol'] == s for l in offen('IBS_SEKTOR')): plane('IBS_SEKTOR', s, 1, GROESSE['IBS_SEKTOR'])
-    for s in sorted([s for s in LAENDER if s in kz and kz[s]['ibs'] < 0.2], key=lambda s: kz[s]['ibs']):
-        if len(offen('IBS_LAND')) < MAX_OFFEN['IBS_LAND'] and not any(l['symbol'] == s for l in offen('IBS_LAND')): plane('IBS_LAND', s, 1, GROESSE['IBS_LAND'])
-    if tsmom_tag:
-        gew = tsmom_gewichte(kz)
-        shortable = {}
-        for s, w in gew.items():
-            if w < 0:
-                try: shortable[s] = alp(f'/v2/assets/{s}').get('shortable', False)
-                except Exception: shortable[s] = False
-        for s, w in sorted(gew.items(), key=lambda x: -abs(x[1])):
-            if w < 0 and not shortable.get(s): log(f'TSMOM {s}: Short nicht leihbar – übersprungen'); continue
-            plane('TSMOM', s, 1 if w > 0 else -1, abs(w))
-    if mw_kauf:
-        for s in MW_LAND:
-            if s in kz and not any(l['symbol'] == s for l in offen('MW_LAND')): plane('MW_LAND', s, 1, GROESSE['MW_LAND'])
-    if ratio is not None and ratio > 1.01 and 'SVXY' in kz and not offen('VIX'): plane('VIX', 'SVXY', 1, GROESSE['VIX'])
-
-    # 6) Netto-Orders je Symbol (MOC)
-    delta = {}
-    for leg, _ in schliessen: delta[leg['symbol']] = delta.get(leg['symbol'], 0) - leg['richtung'] * leg['stueck']
-    for leg in neu: delta[leg['symbol']] = delta.get(leg['symbol'], 0) + leg['richtung'] * leg['stueck']
-    plan = {s: d for s, d in delta.items() if d != 0}
+    kurse = dict(live)
+    try: kurse['^VIX'] = {'px': yahoo_live('^VIX')}; kurse['^VIX3M'] = {'px': yahoo_live('^VIX3M')}
+    except Exception as e: kurse.pop('^VIX', None); kurse.pop('^VIX3M', None); log(f'VIX nicht lesbar: {str(e)[:80]}')
+    # Aufgabe 1: Entscheidung in der reinen Funktion kern.entscheide() (derselbe Codepfad wie im Replay)
+    leihbar = {}
+    for s in TSMOM:
+        try: leihbar[s] = alp(f'/v2/assets/{s}').get('shortable', False)
+        except Exception: leihbar[s] = False
+    zustand = dict(heute=heute.isoformat(), equity=eq, hwm=st['hwm'], legs=st['legs'], leihbar=leihbar, letzte_tsmom=st.get('letzte_tsmom'))
+    schliessen, neu, info = entscheide(zustand, kurse, hist, kalender_v1(heute), kz=kz)
+    ratio = info['ratio']
+    for l in st['legs']:
+        if l.get('id') in info['datum_neu']: l['datum'] = info['datum_neu'][l['id']]       # Folgesignal: halten, Tag neu zählen
+    for z in info['log']: log(z)
+    log(f'Signale: MW-Kauf {info["mw_kauf"]}, MW-Verkauf {info["mw_verkauf"]}, TSMOM {info["tsmom_tag"]}, VIX3M/VIX {ratio and round(ratio, 3)}')
+    plan = netto_plan(schliessen, neu)
     log(f'Ausstiege: {[(l["strategie"], l["symbol"], g) for l, g in schliessen]}')
     log(f'Einstiege: {[(l["strategie"], l["symbol"], l["richtung"] * l["stueck"]) for l in neu]}')
     log(f'Netto-MOC-Orders: {plan}')
@@ -335,12 +236,13 @@ def main():
     st['letzter_lauf'] = heute.isoformat(); speichern(st)
     status_md(st, eq, dd, kz, ratio, plan, schliessen, neu, heute)
 
-def handelstage_zwischen(d0, d1):
-    d = d0; out = []
-    while d < d1:
+def kalender_v1(heute):
+    """Kalender aus der v1-Feiertagstabelle (Aufgabe 1 ohne Verhaltensänderung; Ersatz durch /v2/calendar folgt)."""
+    d = heute - dt.timedelta(days=100); tage = []
+    while d <= heute + dt.timedelta(days=60):
+        if d.weekday() < 5 and d.isoformat() not in FEIERTAGE: tage.append(d.isoformat())
         d += dt.timedelta(days=1)
-        if d.weekday() < 5 and d.isoformat() not in FEIERTAGE: out.append(d)
-    return out
+    return Kalender(tage, quelle='v1-Tabelle')
 
 def status_md(st, eq, dd, kz, ratio, plan, schliessen, neu, heute, dry=False):
     z = [f"# Systembuch-Bot – Stand {heute} {'(DRY RUN)' if dry else ''}", '',
