@@ -1,0 +1,176 @@
+{
+ "stand": "2026-10-15",
+ "quelle": "Alpaca /v2/assets (Paper)",
+ "shortable": {
+  "SPY": true,
+  "QQQ": true,
+  "IWM": true,
+  "EFA": true,
+  "EEM": true,
+  "EWJ": true,
+  "EWG": false,
+  "TLT": true,
+  "IEF": true,
+  "LQD": true,
+  "HYG": true,
+  "GLD": true,
+  "SLV": true,
+  "USO": false,
+  "DBC": true,
+  "DBA": true,
+  "UNG": true,
+  "UUP": true,
+  "FXE": false,
+  "VNQ": true,
+  "SVXY": false
+ },
+ "details": {
+  "SPY": {
+   "shortable": true,
+   "easy_to_borrow": true,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "QQQ": {
+   "shortable": true,
+   "easy_to_borrow": true,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "IWM": {
+   "shortable": true,
+   "easy_to_borrow": true,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "EFA": {
+   "shortable": true,
+   "easy_to_borrow": true,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "EEM": {
+   "shortable": true,
+   "easy_to_borrow": true,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "EWJ": {
+   "shortable": true,
+   "easy_to_borrow": true,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "EWG": {
+   "shortable": false,
+   "easy_to_borrow": false,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "TLT": {
+   "shortable": true,
+   "easy_to_borrow": true,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "IEF": {
+   "shortable": true,
+   "easy_to_borrow": true,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "LQD": {
+   "shortable": true,
+   "easy_to_borrow": true,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "HYG": {
+   "shortable": true,
+   "easy_to_borrow": true,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "GLD": {
+   "shortable": true,
+   "easy_to_borrow": true,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "SLV": {
+   "shortable": true,
+   "easy_to_borrow": true,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "USO": {
+   "shortable": false,
+   "easy_to_borrow": false,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "DBC": {
+   "shortable": true,
+   "easy_to_borrow": true,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "DBA": {
+   "shortable": true,
+   "easy_to_borrow": true,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "UNG": {
+   "shortable": true,
+   "easy_to_borrow": true,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "UUP": {
+   "shortable": true,
+   "easy_to_borrow": true,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "FXE": {
+   "shortable": false,
+   "easy_to_borrow": false,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "VNQ": {
+   "shortable": true,
+   "easy_to_borrow": true,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  },
+  "SVXY": {
+   "shortable": false,
+   "easy_to_borrow": false,
+   "marginable": true,
+   "maintenance_margin_requirement": 30,
+   "tradable": true
+  }
+ }
+}

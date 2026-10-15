@@ -1,6 +1,6 @@
 # Replay Systembuch 2010-01-04 – 2026-10-14
 
-*Erzeugt 15.10.2026 mit `python3 systembuch_bot.py --replay 2010-01-01 2026-10-14`. Yahoo-Tageskurse, Start 100.000 $, Kosten 3 bp je Seite auf das Netto-Volumen je Symbol, Leihbarkeit: K3-Annahme. Dieselbe Entscheidungsfunktion wie live (`kern.entscheide`, `kern.netto_orders`).*
+*Erzeugt 15.10.2026 mit `python3 systembuch_bot.py --replay 2010-01-01 2026-10-14`. Yahoo-Tageskurse, Start 100.000 $, Kosten 3 bp je Seite auf das Netto-Volumen je Symbol, Leihbarkeit: Alpaca /v2/assets (Paper). Dieselbe Entscheidungsfunktion wie live (`kern.entscheide`, `kern.netto_orders`).*
 
 Zwei Modelle, sonst identisch: **live** = so, wie der Bot bei Alpaca handeln kann (Vorzeichenwechsel-Sperre: ein Symbol dreht an einem Tag nie durch null, Review 3.2). **K3-Modell** = ohne Sperre, methodisch gleich dem unabhängigen Replay K3 – an ihm wird die Plausibilität geprüft.
 

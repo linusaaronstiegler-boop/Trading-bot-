@@ -4,7 +4,7 @@
   "2010-01-04",
   "2026-10-14"
  ],
- "leihbarkeit": "K3-Annahme",
+ "leihbarkeit": "Alpaca /v2/assets (Paper)",
  "kalender": "Yahoo-Handelstage (SPY), danach NYSE-Regelwerk",
  "modelle": {
   "live": {
