@@ -39,6 +39,9 @@ START_SPAETESTENS_MIN = 11.5 # später gestartete Läufe handeln nicht mehr (Nac
 ORDER_SPAETESTENS_MIN = 10.5 # vor jeder Order Uhr prüfen; darunter keine Orders (MOC-Annahmeschluss 15:50 ET)
 ORDER_FRUEHESTENS_MIN = 30.0 # Linus' feste Regel 4: Orders nur 10–30 Min vor Schluss
 STORNO_WARTEN_S = 10         # Review 1.9: Storno ist asynchron – so lange auf `canceled` warten
+# Vorzeichenwechsel (Review 3.2): 'beide' = an einem Tag nie durch null (Standard). Zeigt Paper-Prüfung 6, dass Alpaca short → long mit zwei
+# Kauf-MOC-Orders (eindecken + neu kaufen) annimmt, kann hier 'verkauf' stehen: dann wird nur noch long → short gesperrt (Replay: ≈ +1,9 Punkte p.a.).
+VORZEICHENWECHSEL_SPERRE = 'beide'
 ENDSTATUS = ('filled', 'canceled', 'expired', 'rejected', 'done_for_day', 'replaced')
 JOURNAL_SPALTEN = ['id', 'strategie', 'symbol', 'richtung', 'stueck', 'einstieg', 'einstieg_datum', 'ausstieg', 'ausstieg_datum', 'pnl', 'grund',
                    'fill_einstieg', 'fill_ausstieg', 'schluss_einstieg', 'schluss_ausstieg', 'abweichung_bp', 'rendite_bp', 'haltetage',
@@ -279,16 +282,17 @@ def abrechnen(st, heute, kal, schluss):
     for a in st['auftraege']:
         if a['datum'] >= heute: rest.append(a); continue
         F, p_fill, status = 0, None, a['status']
-        if a.get('client_order_id'):                                                    # auch 'abgelehnt': nachsehen, ob doch angekommen
-            o = order_lesen(a)
-            if o is not None:
-                if o['status'] not in ENDSTATUS: raise Abbruch('ABGLEICH NÖTIG', f"MOC {a['symbol']} vom {a['datum']} noch nicht abgeschlossen ({o['status']})")
-                F = int(round(float(o.get('filled_qty') or 0))) * (1 if o['side'] == 'buy' else -1)
-                p_fill = float(o['filled_avg_price']) if F else None
-                status = o['status']
-                g = fills.get(o['id'])
-                if g is not None and abs(g - abs(F)) > 1e-9: log(f"WARNUNG: Fills laut /activities ({g}) ≠ filled_qty ({abs(F)}) für {a['symbol']} {a['datum']}")
-            else: status = 'nicht angekommen'
+        wert = 0.0
+        for teil in [x for x in (a, a.get('zweite')) if x and x.get('client_order_id')]:   # auch 'abgelehnt': nachsehen, ob doch angekommen
+            o = order_lesen(teil)
+            if o is None: status = 'nicht angekommen' if teil is a else status; continue
+            if o['status'] not in ENDSTATUS: raise Abbruch('ABGLEICH NÖTIG', f"MOC {a['symbol']} vom {a['datum']} noch nicht abgeschlossen ({o['status']})")
+            f = int(round(float(o.get('filled_qty') or 0))) * (1 if o['side'] == 'buy' else -1)
+            F += f; wert += abs(f) * float(o['filled_avg_price'] or 0) if f else 0.0
+            status = o['status'] if teil is a else f"{status}/{o['status']}"
+            g = fills.get(o['id'])
+            if g is not None and abs(g - abs(f)) > 1e-9: log(f"WARNUNG: Fills laut /activities ({g}) ≠ filled_qty ({abs(f)}) für {a['symbol']} {a['datum']}")
+        p_fill = wert / abs(F) if F else None
         s_px = schluss.get(a['symbol'], {}).get(a['datum'])
         preis = p_fill or s_px
         if preis is None: raise Abbruch('FEHLER', f"kein Schlusskurs für {a['symbol']} am {a['datum']} – Abrechnung unmöglich")
@@ -333,7 +337,7 @@ def order_lesen(a):
 
 def fill_aktivitaeten(st, heute):
     """GET /v2/account/activities/FILL seit dem ältesten offenen Auftrag: Summe Stück je order_id (Gegenprobe zu filled_qty)."""
-    tage = [a['datum'] for a in st['auftraege'] if a['datum'] < heute and a.get('order_id')]
+    tage = [a['datum'] for a in st['auftraege'] if a['datum'] < heute and (a.get('order_id') or (a.get('zweite') or {}).get('order_id'))]
     if not tage: return {}
     try:
         akt = alp(f'/v2/account/activities/FILL?after={min(tage)}T00:00:00Z&direction=asc&page_size=100')
@@ -512,6 +516,7 @@ def senden(st, heute, kz, ausstiege, einstiege, orders, uhr, offene):
         if x['symbol'] not in symbole: symbole.append(x['symbol'])
     for s in symbole:
         d = orders.get(s, 0); cid = f'sb-{heute}-{s}'; komps = []
+        P = sum(l['richtung'] * l['stueck'] for l in st['legs'] if l['symbol'] == s)      # Bestand vor dem heutigen Auftrag
         for leg, grund, menge in [a for a in ausstiege if a[0]['symbol'] == s]:
             komps.append(dict(art='aus', leg_id=leg['id'], menge=menge, seite=-leg['richtung'], strategie=leg['strategie']))
             leg['ausstieg'] = dict(grund=grund, datum=heute, menge=menge, kurs_entscheidung=kz.get(s, {}).get('px'), auftrag=cid)
@@ -519,8 +524,10 @@ def senden(st, heute, kz, ausstiege, einstiege, orders, uhr, offene):
             leg.update(id=st['naechste_id'], status='pending', einstieg_datum=heute, kurs_entscheidung=kz[s]['px']); st['naechste_id'] += 1
             komps.append(dict(art='ein', leg_id=leg['id'], menge=leg['stueck'], seite=leg['richtung'], strategie=leg['strategie'], nr=nr)); nr += 1
             st['legs'].append(leg)
-        auftraege.append(dict(datum=heute, symbol=s, menge=d, client_order_id=cid if d else None, order_id=None,
-                              status='vorbereitet' if d else 'intern', komponenten=komps))
+        a = dict(datum=heute, symbol=s, menge=d, client_order_id=cid if d else None, order_id=None, status='vorbereitet' if d else 'intern', komponenten=komps)
+        if P < 0 < P + d:                                                                # short → long (nur ohne Kauf-Sperre): eindecken + neu kaufen
+            a['menge_order'] = -P; a['zweite'] = dict(client_order_id=f'{cid}-2', order_id=None, menge=P + d, status='vorbereitet')
+        auftraege.append(a)
     st['auftraege'] += auftraege; speichern(st)
     neu_setzen = []                                                                      # (Leg, steigt heute aus) mit storniertem Stop
     try:
@@ -566,17 +573,30 @@ def auftrag_senden(st, a, uhr, offene, neu_setzen):
         a.update(status='abgelehnt', grund=f'nicht gesendet, {m:.1f} Min bis Schluss')
         return [f'ORDER NICHT GESENDET {s}: {m:.1f} Min bis Schluss nach Storno']
     try:
-        o = moc_senden(s, d, a['client_order_id'])
+        o = moc_senden(s, a.get('menge_order', d), a['client_order_id'])
     except Abgelehnt as e:
         a.update(status='abgelehnt', grund=schwaerzen(e)[:200]); log(f'Order {s} {d:+d} ABGELEHNT: {schwaerzen(e)[:160]}')
+        if a.get('zweite'): a['zweite']['status'] = 'abgelehnt'
         return [f'ORDER ABGELEHNT {s} {d:+d}: {schwaerzen(e)[:160]}']
     a.update(order_id=o['id'], status='gesendet')
+    zusatz = []
+    if a.get('zweite'):                                                                  # zweite Kauforder: neue Long-Position
+        z = a['zweite']; m = minuten_bis_schluss_jetzt(uhr)
+        if not (ORDER_SPAETESTENS_MIN <= m <= ORDER_FRUEHESTENS_MIN):
+            z.update(status='abgelehnt', grund='Fenster'); zusatz.append(f"ORDER NICHT GESENDET {s} {z['menge']:+d} (zweiter Teil): {m:.1f} Min bis Schluss")
+        else:
+            try:
+                o2 = moc_senden(s, z['menge'], z['client_order_id']); z.update(order_id=o2['id'], status='gesendet')
+                log(f"MOC buy {z['menge']} {s} (zweiter Teil, neu long) → {o2['id']}")
+            except Abgelehnt as e:
+                z.update(status='abgelehnt', grund=schwaerzen(e)[:200])
+                zusatz.append(f"ORDER ABGELEHNT {s} {z['menge']:+d} (zweiter Teil short → long): {schwaerzen(e)[:120]}")
     for i, (leg, _) in enumerate(neu_setzen):                                              # aussteigende Legs bekommen keinen Stop zurück
         if leg['id'] in aus_ids and leg.get('ausstieg', {}).get('menge', 0) >= leg['stueck']: neu_setzen[i] = (leg, True)
     for leg in aus_legs:
         if leg.get('ausstieg'): leg['ausstieg']['gesendet'] = True
-    log(f"MOC {'buy' if d > 0 else 'sell'} {abs(d)} {s} → {o['id']} ({minuten_bis_schluss_jetzt(uhr):.1f} Min vor Schluss)")
-    return []
+    log(f"MOC {'buy' if d > 0 else 'sell'} {abs(a.get('menge_order', d))} {s} → {o['id']} ({minuten_bis_schluss_jetzt(uhr):.1f} Min vor Schluss)")
+    return zusatz
 
 
 # ---------- Hauptlauf ----------
@@ -726,7 +746,7 @@ def lauf(a):
         schliessen = [(l, stopp.split(':')[0]) for l in st['legs']]; neu = []
         st.update(gestoppt=True, stopp_grund=st.get('stopp_grund') or stopp, aufgeschoben=[])
     roh = netto_plan(schliessen, neu)
-    no = netto_orders(st['legs'], schliessen, neu)                                     # Review 3.2: nie durch null in einem Tag
+    no = netto_orders(st['legs'], schliessen, neu, VORZEICHENWECHSEL_SPERRE)           # Review 3.2: nie durch null in einem Tag
     plan = no['orders']
     for s in no['gekreuzt']: log(f'{s}: Vorzeichenwechsel – heute nur bis null ({roh.get(s, 0):+d} → {plan.get(s, 0):+d}), Rest nachholen/verfallen')
     for x in no['verfallen']: log(f"verfällt (Vorzeichenwechsel): {x['strategie']} {x['symbol']} {x['richtung'] * x['stueck']:+d}")

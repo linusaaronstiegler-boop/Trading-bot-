@@ -118,3 +118,27 @@ def test_aufgeschobenes_ohne_kurs_bleibt_vorgemerkt():
     z = dict(heute='2026-10-01', equity=1e5, hwm=1e5, legs=[], leihbar={}, aufgeschoben=auf)
     aus, ein, info = kern.entscheide(z, {}, {}, kern.Kalender.nach_regeln('2026-09-01', '2026-12-31'), kz={})
     assert info['aufgeschoben_behalten'] == auf and any('kein Kurs' in x for x in info['log'])
+
+
+F5 = [p for p in FIXTURES if 'f5_' in p][0]
+
+
+@pytest.mark.parametrize('alpaca_nimmt_an', [True, False])
+def test_wechsel_short_long_mit_zwei_kauforders(monkeypatch, tmp_path, alpaca_nimmt_an):
+    """VORZEICHENWECHSEL_SPERRE='verkauf': short → long als Eindecken + Neukauf. Lehnt Alpaca die zweite Order ab
+    (Prüfung 6 negativ), bleibt der Zustand trotzdem richtig: Folgelauf gleicht ab, IBS-Rest verfällt, nichts doppelt."""
+    monkeypatch.setattr(v2, 'VORZEICHENWECHSEL_SPERRE', 'verkauf')
+    fx = lade_fixture(F5); b = AlpacaAttrappe(fx)
+    for l in fx['state']['legs']: b.positionen[l['symbol']] = b.positionen.get(l['symbol'], 0) + l['richtung'] * l['stueck']
+    b.kauf_flip_ablehnen = not alpaca_nimmt_an; b.installieren(v2, monkeypatch, tmp_path); b.neuer_tag('2025-11-20')
+    vorher = b.positionen['IWM']
+    assert vorher < 0
+    r, code = lauf()
+    iwm = sorted((o['client_order_id'], int(o['qty'])) for o in b.orders.values() if o['symbol'] == 'IWM' and o['time_in_force'] == 'cls')
+    assert iwm[0] == ('sb-2025-11-20-IWM', -vorher)
+    assert (len(iwm) == 2) == alpaca_nimmt_an and code == (0 if alpaca_nimmt_an else 1)
+    b.schluss('2025-11-20'); b.neuer_tag('2025-11-21'); fx['heute'] = '2025-11-20'
+    r, code = lauf()
+    st = zustand(tmp_path)
+    assert 'ABGLEICH' not in open(tmp_path / 'STATUS.md').read()                       # Folgelauf: Legs = Positionen nach Abrechnung
+    if alpaca_nimmt_an: assert any(l['symbol'] == 'IWM' and l['strategie'] == 'IBS' and l['einstieg_datum'] == '2025-11-20' for l in st['legs'])

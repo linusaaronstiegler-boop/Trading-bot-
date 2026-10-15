@@ -1,6 +1,6 @@
 # Abschluss Systembuch-Bot v2 – Claude-Code-Sitzung 15./16.10.2026
 
-Repo `linusaaronstiegler-boop/Trading-bot-` (= `systembuch-bot`), Branch **`claude/systembuch-v2`**, ein Commit je Aufgabe. **`pytest`: 99 Tests grün**, lokal und auf GitHub (Workflow `tests`).
+Repo `linusaaronstiegler-boop/Trading-bot-` (= `systembuch-bot`), Branch **`claude/systembuch-v2`**, ein Commit je Aufgabe. **`pytest`: 102 Tests grün**, lokal und auf GitHub (Workflow `tests`).
 
 ## Kurz
 
@@ -88,7 +88,8 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 
 - Paper-Prüfungen 2, 4, 6: heute zwischen 21:30 und 21:49 MESZ. Ab 26.10. (MEZ, USA noch Sommerzeit) eine Stunde früher, 20:30–20:49. Befehl unten. **Vor dem ersten Live-Lauf**, weil die Test-Orders sonst den Positionsabgleich stören.
 - Prüfung 5 und der grüne Actions-`dry`-Lauf brauchen die Secrets.
-- Entscheidung zur Sperre auf der Kaufseite (nach Prüfung 6) und zu TSMOM unter Live-Bedingungen: Sitzung mit dir, vorab festgeschriebener Test.
+- Entscheidung zur Sperre auf der Kaufseite: Wenn Prüfung 6 die zweite Kauforder annimmt, genügt in `systembuch_bot.py` die Zeile `VORZEICHENWECHSEL_SPERRE = 'verkauf'`. Zwei Kauforders sind gebaut und getestet (Dauertest 2022 auf den Cent gleich dem Replay, Ablehnung der zweiten Order sauber abgefangen). TSMOM unter Live-Bedingungen: Sitzung mit dir, vorab festgeschriebener Test.
+- Randfall: Ein BB-Long und ein TSMOM-Short im selben ETF mit netto Short-Bestand. Dann ist der GTC-Stop des BB-Legs bei Alpaca ein Leerverkaufs-Stop. Lehnt Alpaca ihn ab, gibt es eine Warnung im STATUS, und der Stop fehlt bis zum Ausstieg.
 - Review 1.7 (BB-Signal am Ex-Dividenden-Tag): beobachten, wenn SPY ex geht.
 - K4-Variante „TSMOM-Reservierung“: Auslegung prüfen (Entscheidung 11).
 - Kalender, Monatswechsel-Termine und Wochenbericht laufen im Echtbetrieb erstmals zum Monatsende Oktober (29./30.10.).

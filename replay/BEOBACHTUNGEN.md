@@ -17,7 +17,7 @@ Zahlen: `replay/BERICHT.md`, 04.01.2010 bis 14.10.2026, 100.000 $, 3 bp je Seite
 - Unter Live-Bedingungen ist **„ohne TSMOM“ besser als das Gesamtbuch**: +11,5 % gegen +10,2 % p.a., Sharpe 0,72 gegen 0,68. Im K3-Modell bringt TSMOM dagegen +0,5 Punkte.
 
 Mögliche Wege, alle mit vorab festgeschriebenem Test zu entscheiden:
-1. Auf dem Paper-Konto prüfen, ob short → long mit zwei Kauf-MOC-Orders angenommen wird (zusätzliche Fünf-Minuten-Prüfung 6 in ABSCHLUSS.md). Wenn ja, `flip_sperre='verkauf'` im Live-Lauf. Das ist eine Ausführungsfrage, keine Regeländerung. Ergebnis dann ≈ +12,1 % p.a.
+1. Auf dem Paper-Konto prüfen, ob short → long mit zwei Kauf-MOC-Orders angenommen wird (Prüfung 6, `werkzeuge/paper_pruefungen.py --orders`). Wenn ja, in `systembuch_bot.py` `VORZEICHENWECHSEL_SPERRE = 'verkauf'` setzen. Der Live-Code ist dafür schon gebaut und geprüft: Der Dauertest 2022 mit zwei Kauforders ergibt auf den Cent dasselbe wie der Replay. Das ist eine Ausführungsfrage, keine Regeländerung. Ergebnis dann ≈ +12,1 % p.a.
 2. TSMOM in ein zweites Alpaca-Paper-Konto legen. Dann gibt es kein Netting zwischen TSMOM-Shorts und den Long-Strategien, und der Replay entspricht dem K3-Modell. Brutto-Deckel und Bremse müssten über beide Konten gerechnet werden.
 3. TSMOM streichen. Das wäre eine Regeländerung mit eigenem Test, und K4 hat Strukturvarianten bisher alle verworfen.
 

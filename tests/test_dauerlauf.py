@@ -15,7 +15,8 @@ import systembuch_bot as v2
 from tests.alpaca_attrappe import AlpacaAttrappe
 
 VON, BIS = '2025-01-02', '2025-06-30'
-ZEITRAEUME = [('2025-01-02', '2025-06-30'), ('2022-01-03', '2022-12-30')]   # 2022: viele Vorzeichenwechsel (TSMOM short gegen IBS long)
+ZEITRAEUME = [('2025-01-02', '2025-06-30', 'beide'), ('2022-01-03', '2022-12-30', 'beide'),   # 2022: viele Vorzeichenwechsel (TSMOM short gegen IBS long)
+              ('2022-01-03', '2022-12-30', 'verkauf')]                                      # Wechsel short → long mit zwei Kauforders
 LEIHBAR = {s: s not in ('EWG', 'USO', 'FXE') for s in kern.TSMOM}
 
 
@@ -40,9 +41,10 @@ def tag_fixture(alle, d):
                 hist=hist, live=live, vix=vix, vix3m=vix3m, leihbar=LEIHBAR, state={'legs': []}), ohlc
 
 
-@pytest.mark.parametrize('von,bis', ZEITRAEUME)
-def test_halbjahr_live_gegen_attrappe(monkeypatch, tmp_path, von, bis):
+@pytest.mark.parametrize('von,bis,sperre', ZEITRAEUME)
+def test_halbjahr_live_gegen_attrappe(monkeypatch, tmp_path, von, bis, sperre):
     VON, BIS = von, bis
+    monkeypatch.setattr(v2, 'VORZEICHENWECHSEL_SPERRE', sperre)
     alle = lade_alle()
     tage = [r[0] for r in alle['SPY'] if VON <= r[0] <= BIS]
     fx, _ = tag_fixture(alle, tage[0])
@@ -65,6 +67,7 @@ def test_halbjahr_live_gegen_attrappe(monkeypatch, tmp_path, von, bis):
             soll[l['symbol']] = soll.get(l['symbol'], 0) + l['richtung'] * n
         assert {s: n for s, n in soll.items() if n} == b.positionen, d                   # nach dem Schluss: Legs = Positionen
     journal = list(csv.DictReader(open(tmp_path / 'journal.csv')))
+    if sperre == 'verkauf': assert any(o['client_order_id'].endswith('-2') for o in b.orders.values()), 'kein Wechsel short → long im Test'
     assert len(journal) > 300 and all(z['ausstieg'] and z['einstieg'] for z in journal)
     assert all(z['schluss_ausstieg'] for z in journal)                                   # intern Verrechnetes: Preis = offizieller Schluss
     # Gegenprobe mit dem Replay desselben Zeitraums. Die Attrappe kennt keine Dividenden; bewertet der Replay ebenfalls ohne
@@ -76,7 +79,7 @@ def test_halbjahr_live_gegen_attrappe(monkeypatch, tmp_path, von, bis):
     for s in D.a: D.a[s]['adj'] = D.a[s]['c'].copy()
     naechster = (_dt.date.fromisoformat(BIS) + _dt.timedelta(days=1)).isoformat()
     kal = kern.Kalender(D.tage + kern.regel_handelstage(naechster, '2026-12-31')[0])
-    sim = replay.simuliere(D, KZ, i0, i1, None, 'beide', 0.0, 100000.0, LEIHBAR, kal)
+    sim = replay.simuliere(D, KZ, i0, i1, None, sperre, 0.0, 100000.0, LEIHBAR, kal)
     print(f'Live-Code {b.equity:,.2f} $, Replay ohne Dividenden {sim["tage"]["equity"].iloc[-1]:,.2f} $')
     assert abs(b.equity - sim['tage']['equity'].iloc[-1]) < 1.0
     live = {(z['strategie'], z['symbol'], z['einstieg_datum'], z['ausstieg_datum'], int(z['stueck'])) for z in journal}

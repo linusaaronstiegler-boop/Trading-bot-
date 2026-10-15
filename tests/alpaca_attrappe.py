@@ -23,6 +23,7 @@ class AlpacaAttrappe:
         self.netzfehler_nach_post = set()                                             # sym: Order kommt an, Antwort geht verloren
         self.abbruch_nach_orders = None                                               # nach n gesendeten MOC-Orders KeyboardInterrupt
         self.fills = []
+        self.kauf_flip_ablehnen = False                                               # zweite Kauforder bei Short ablehnen (Prüfung 6 negativ)
         self.mit_bargeld = False                                                      # True: Equity = Bargeld + Positionen (Dauertest)
         self.uhr_folge = []                                                           # nächste /v2/clock-Antworten (Zeitstempel)
         self.geschlafen = []
@@ -104,6 +105,9 @@ class AlpacaAttrappe:
         if p == '/v2/orders' and m == 'POST':
             s = body['symbol']
             if s in self.ablehnen: raise v2_abgelehnt(f'Alpaca 403 /v2/orders: {self.ablehnen[s]}')
+            if self.kauf_flip_ablehnen and body['side'] == 'buy' and self.positionen.get(s, 0) < 0 and any(
+                    o['symbol'] == s and o['side'] == 'buy' and o['status'] == 'accepted' for o in self.orders.values()):
+                raise v2_abgelehnt('Alpaca 403 /v2/orders: insufficient qty available for order')
             if body.get('client_order_id') and any(o['client_order_id'] == body['client_order_id'] for o in self.orders.values()):
                 raise v2_abgelehnt('Alpaca 422 /v2/orders: client_order_id must be unique')
             if body['time_in_force'] == 'cls' and self.abbruch_nach_orders is not None:
