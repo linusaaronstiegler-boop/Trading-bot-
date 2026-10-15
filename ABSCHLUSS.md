@@ -1,6 +1,6 @@
 # Abschluss Systembuch-Bot v2 – Claude-Code-Sitzung 15./16.10.2026
 
-Repo `linusaaronstiegler-boop/Trading-bot-` (= `systembuch-bot`), Branch **`claude/systembuch-v2`**, ein Commit je Aufgabe. **`pytest`: 98 Tests grün**, lokal und auf GitHub (Workflow `tests`).
+Repo `linusaaronstiegler-boop/Trading-bot-` (= `systembuch-bot`), Branch **`claude/systembuch-v2`**, ein Commit je Aufgabe. **`pytest`: 99 Tests grün**, lokal und auf GitHub (Workflow `tests`).
 
 ## Kurz
 
@@ -20,7 +20,7 @@ Repo `linusaaronstiegler-boop/Trading-bot-` (= `systembuch-bot`), Branch **`clau
 | 3 Replay | `--replay 2010-01-01 2026-10-14`, derselbe Code wie live, Ausgabe unter `replay/`, K4-Schalter | 794d284 |
 | 4 Plausibilität | Abgleich mit K3, `replay/BERICHT.md`, `replay/BEOBACHTUNGEN.md`, Zahlen im README | de29c28 |
 | 5 Betrieb | ausführliches `STATUS.md`, Abschaltkriterium K5, VIX-Ersatzquellen mit Alarm, Wochenbericht, Halbtage jedes Jahr, Issue-Alarm, Artifact | e439ab2 |
-| 6 Tests | je README-Regel ein Test, Lauffenster, Kalender, Netting, Ablehnung, Wiederanlauf; **Dauertest**: Live-Code 125 Tage gegen eine Alpaca-Attrappe, Trades identisch mit dem Replay | 32150fc, 96c5ffa |
+| 6 Tests | je README-Regel ein Test, Lauffenster, Kalender, Netting, Ablehnung, Wiederanlauf; **Dauertest**: der echte Live-Lauf Tag für Tag gegen eine Alpaca-Attrappe (1. Hj. 2025 und ganz 2022 mit vielen Vorzeichenwechseln) – Ergebnis auf den Cent gleich dem Replay ohne Dividenden, identische Trades | 32150fc, 96c5ffa |
 | 7 Echtgeld | `ucits.md`: Gegenstücke mit ISIN/Xetra/TER/Spread, Brokerkosten inkl. Traders Place, Break-even-Rechnung, C40-Ergebnis | 4516f79 |
 | Review v2 | 1 Befund hoch, 5 mittel, 6 niedrig behoben (siehe unten) | c800706, ecc4c99 |
 | Paper | Live-Trockenlauf, Alpaca-Fixture, `assets.json`, Prüfungen 1 und 3 | 1647d41 |

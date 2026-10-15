@@ -15,6 +15,7 @@ import systembuch_bot as v2
 from tests.alpaca_attrappe import AlpacaAttrappe
 
 VON, BIS = '2025-01-02', '2025-06-30'
+ZEITRAEUME = [('2025-01-02', '2025-06-30'), ('2022-01-03', '2022-12-30')]   # 2022: viele Vorzeichenwechsel (TSMOM short gegen IBS long)
 LEIHBAR = {s: s not in ('EWG', 'USO', 'FXE') for s in kern.TSMOM}
 
 
@@ -39,7 +40,9 @@ def tag_fixture(alle, d):
                 hist=hist, live=live, vix=vix, vix3m=vix3m, leihbar=LEIHBAR, state={'legs': []}), ohlc
 
 
-def test_halbjahr_live_gegen_attrappe(monkeypatch, tmp_path):
+@pytest.mark.parametrize('von,bis', ZEITRAEUME)
+def test_halbjahr_live_gegen_attrappe(monkeypatch, tmp_path, von, bis):
+    VON, BIS = von, bis
     alle = lade_alle()
     tage = [r[0] for r in alle['SPY'] if VON <= r[0] <= BIS]
     fx, _ = tag_fixture(alle, tage[0])
@@ -64,11 +67,18 @@ def test_halbjahr_live_gegen_attrappe(monkeypatch, tmp_path):
     journal = list(csv.DictReader(open(tmp_path / 'journal.csv')))
     assert len(journal) > 300 and all(z['ausstieg'] and z['einstieg'] for z in journal)
     assert all(z['schluss_ausstieg'] for z in journal)                                   # intern Verrechnetes: Preis = offizieller Schluss
-    # Vergleich mit dem Replay desselben Halbjahrs (Bewertung dort mit Dividenden, hier ohne → kleine Differenz erlaubt)
+    # Gegenprobe mit dem Replay desselben Zeitraums. Die Attrappe kennt keine Dividenden; bewertet der Replay ebenfalls ohne
+    # Dividenden (adj := c), müssen beide auf den Dollar gleich sein und dieselben Trades haben (bis auf die Ausstiege des letzten
+    # Tages, die der Live-Lauf erst im Folgelauf abrechnet). Das prüft Netting, Vorzeichenwechsel-Sperre, Aufschub, Stops und FIFO.
+    import datetime as _dt
     D = replay.Daten(BIS); i0, i1 = D.index_ab(VON), D.index_bis(BIS)
-    kal = kern.Kalender(D.tage + kern.regel_handelstage('2025-07-01', '2025-08-31')[0])
-    sim = replay.simuliere(D, replay.kennzahlen_alle(D, i0, i1), i0, i1, None, 'beide', 0.0, 100000.0, LEIHBAR, kal)
-    r_live, r_sim = b.equity / 100000 - 1, sim['tage']['equity'].iloc[-1] / 100000 - 1
-    print(f'Live-Code {r_live:+.2%}, Replay {r_sim:+.2%}, Journal {len(journal)}, Replay-Trades {len(sim["trades"])}')
-    assert abs(r_live - r_sim) < 0.015, (r_live, r_sim)
-    assert abs(len(journal) - len(sim['trades'])) / len(sim['trades']) < 0.05, (len(journal), len(sim['trades']))
+    KZ = replay.kennzahlen_alle(D, i0, i1)
+    for s in D.a: D.a[s]['adj'] = D.a[s]['c'].copy()
+    naechster = (_dt.date.fromisoformat(BIS) + _dt.timedelta(days=1)).isoformat()
+    kal = kern.Kalender(D.tage + kern.regel_handelstage(naechster, '2026-12-31')[0])
+    sim = replay.simuliere(D, KZ, i0, i1, None, 'beide', 0.0, 100000.0, LEIHBAR, kal)
+    print(f'Live-Code {b.equity:,.2f} $, Replay ohne Dividenden {sim["tage"]["equity"].iloc[-1]:,.2f} $')
+    assert abs(b.equity - sim['tage']['equity'].iloc[-1]) < 1.0
+    live = {(z['strategie'], z['symbol'], z['einstieg_datum'], z['ausstieg_datum'], int(z['stueck'])) for z in journal}
+    rep = {(r.strategie, r.symbol, r.einstieg_datum, r.ausstieg_datum, int(r.stueck)) for r in sim['trades'].itertuples()}
+    assert live <= rep and all(x[3] == BIS for x in rep - live), sorted(rep - live)[:5]
