@@ -1,6 +1,6 @@
 # Abschluss Systembuch-Bot v2 – Claude-Code-Sitzung 15./16.10.2026
 
-Repo `linusaaronstiegler-boop/Trading-bot-` (= `systembuch-bot`), Branch **`claude/systembuch-v2`**, ein Commit je Aufgabe. **`pytest`: 113 Tests grün**, lokal und auf GitHub (Workflow `tests`).
+Repo `linusaaronstiegler-boop/Trading-bot-` (= `systembuch-bot`), Branch **`claude/systembuch-v2`**, ein Commit je Aufgabe. **`pytest`: 121 Tests grün**, lokal und auf GitHub (Workflow `tests`).
 
 ## Kurz
 
@@ -24,6 +24,7 @@ Repo `linusaaronstiegler-boop/Trading-bot-` (= `systembuch-bot`), Branch **`clau
 | 7 Echtgeld | `ucits.md`: Gegenstücke mit ISIN/Xetra/TER/Spread, Brokerkosten inkl. Traders Place, Break-even-Rechnung, C40-Ergebnis | 4516f79 |
 | Review v2 | 1 Befund hoch, 5 mittel, 6 niedrig behoben (siehe unten) | c800706, ecc4c99 |
 | Paper | Live-Trockenlauf, Alpaca-Fixture, `assets.json`, Prüfungen 1 und 3 | 1647d41 |
+| Abschluss-Review | 6 Prüfer + Gegenprüfung je Befund (38 Agenten): 32 Befunde, 4 bestätigt und behoben, dazu 3 plausible günstig mitbehoben (siehe Review-Abschnitt) | 9874c89, NEU2 |
 | v1-Stand 23:15 | Neue `SPEC-v2.md`, `REVIEW-v1.md`, v1-Referenz im Test ersetzt. Die drei v1-Fixes (Karfreitag 2027, Abgleich nur `us_equity` mit Exit 1 bzw. nur Meldung im dry, abgelehnte Order = Symbol unverändert + Exit 1) in v2 übernommen und **gegen v1 auf denselben Fixtures getestet** (`tests/test_v1_fixes.py`); v1 = v2 weiter auf allen 6 Tagen | 0a2a167 |
 
 `bot.yaml` aus dem letzten Upload ist gleich dem ursprünglichen; `.github/workflows/bot.yml` bleibt die weiterentwickelte Fassung (Halbtage, dry/live-Auswahl, Artifact, Issue-Alarm).
@@ -63,7 +64,9 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 11. **Replay:** Die ATR kommt wie live aus der bereinigten Reihe (K3: roh). SVXY ist ab 60 Tagen Historie handelbar, wie live. Die TSMOM-Reservierung (K4-Schalter) habe ich als „Brutto für TSMOM am TSMOM-Tag vor den vorrangigen Strategien freihalten“ ausgelegt, weil die K4-Definition nicht im Repo liegt.
 12. **`equity.csv`:** Die Zeile des Vortags kommt aus Alpaca `last_equity` (Schlusskurs). Lücken füllt `portfolio/history`, der Höchststand wird gegen beide geprüft.
 13. **`abweichung_bp`** = Kosten der MOC-Fills gegenüber dem offiziellen Schluss, Ein- und Ausstieg zusammen und in Leg-Richtung. Positiv heißt teurer als im Replay.
-14. **`ucits.md`:** Traders Place ist dazugekommen (dein Broker). C40 macht die Break-even-Rechnung zur reinen Obergrenze. Es gibt eine Beobachtung zur Ausführung auf gettex um 21:45 (Test C41, nicht entschieden).
+14. **SVXY im Replay ab 29.12.2011** (60 Handelstage Historie, wie live in `kern.kennzahlen`), nicht ab Auflage 04.10.2011, obwohl die SPEC „ab 10/2011“ schreibt: Nur so trifft der Replay K3 (80 VIX-Trades, 2012 +21 %). Ab Auflage wären es 83 Trades und 2012 +16,8 %, weil der erste Einstieg in die Bremse fällt (BEOBACHTUNGEN 2).
+15. **Neustart-Schutz (Review 2.5):** Eine vorhandene `state.json` ohne `start`/`startkapital` bei einem Konto, das schon gehandelt hat (equity.csv/journal.csv), ergibt rot „ZUSTAND FEHLT“, statt still mit Startkapital = heutige Equity neu anzufangen. Die *gelöschte* `state.json` bleibt dein README-Weg für den Neustart nach dem Not-Aus und läuft weiter, jetzt mit Warnung im STATUS. Ausdrücklicher Neustart mit vorhandener Datei: `"neustart": true`.
+16. **`ucits.md`:** Traders Place ist dazugekommen (dein Broker). C40 macht die Break-even-Rechnung zur reinen Obergrenze. Es gibt eine Beobachtung zur Ausführung auf gettex um 21:45 (Test C41, nicht entschieden).
 
 ## Review-Befunde → Status
 
@@ -74,6 +77,7 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 - **Mittel:** Not-Aus mit abgelehnter Order (✔ Abwicklung bis glatt) · TSMOM nach Abbruch (✔ alle Aufträge vorab gespeichert, Nachholen) · Schlüssel mit Zeilenumbruch landete im Log (✔ geprüft und geschwärzt) · Verbindungsabbruch nach dem Senden (✔ Nachschau per client_order_id) · BB-Stop ohne client_order_id (✔ übernehmen statt verdoppeln).
 - **Niedrig:** BB-Höchstzahl ✔ · Aufschub ohne Kurs ✔ · Not-Aus vor dem Abgleich ✔ · Storno-Ausnahme ✔ · Uhr direkt vor dem POST ✔ · Wartezeit abzüglich Vorbereitung ✔ · Höchststand-Historie nur 1 Monat ✔ · veraltete Snapshot-Kerze ✔.
 - **Mittel/niedrig (Prüfer Regeltreue/Abrechnung/API):** doppelte Journalzeilen nach Abbruch ✔ (idempotent, Zustand direkt nach der Abrechnung gespeichert) · Stop-Fill während des Wartens auf 15:45 ✔ (Stops werden zuerst abgerechnet, Ausstiege auf den Restbestand gekappt) · verwaister Stop nach abgelehnter MOC ✔ (jetzt: Leg bleibt ganz, Stop über die volle Menge zurück) · aufgeschobene Teile ohne Kurs gingen live verloren ✔ · Neustart nach Not-Aus übernahm alte equity.csv ✔ (Kurve nur ab Start) · intern verrechnete Teile zum Fill statt zum Schluss gebucht ✔ (Mischpreis je Leg) · Stop-Ausstieg verfälschte die MOC-Abweichung ✔ · Haltetage über 100 Tage falsch ✔ (Kalender reicht bis zum ältesten Leg).
+- **Abschluss-Review (16.10. 00:30, Workflow mit Gegenprüfung):** bestätigt und behoben: BERICHT.md stürzte mit K4-Schaltern ab · Tresor-Abschnitt stürzte bei Zeiträumen ohne 10/2023 ab (Lernzeit-Läufe) · laufende Yahoo-Kerze wurde gecacht · ein dreimal gescheiterter Push blieb grün (jetzt Exit 1 → Issue, `rebase --abort`, Artifact vor dem Commit). Mitbehoben: Kennzahlen-Cache hängt am Inhalt der Kursdateien und am Quelltext · Review 2.5 (Entscheidung 15). Als Beobachtung statt Fehler: VIX-Schluss 16:15 gegen Entscheidung 15:45 (Variante `vix_vortag`), Stückzahl aus split-bereinigtem Yahoo-Close bei UNG/USO (wie K3, ≤ 0,16 Punkte), SVXY-Start (Entscheidung 14).
 - **Hoch (Prüfer Abrechnung):** BB-Stop nach MOC-Kauf im Symbol wird von Alpaca abgelehnt (Wash-Trade-Schutz). ✔ teilweise: Der Bot setzt den Stop jetzt bewusst erst im nächsten Lauf neu, statt eine Ablehnung zu provozieren, und der Replay bildet die Lücke ab (Wirkung ≈ 0). Lückenlos nur mit Nachlauf außerhalb des Fensters (offen, siehe oben).
 
 ## Paper-Prüfungen (REVIEW-v1 §8)
@@ -81,7 +85,7 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 | Nr. | Prüfung | Ergebnis |
 |---|---|---|
 | 1 | Snapshot `feed=delayed_sip` | **bestanden**: HTTP 200, Hoch/Tief aus SIP |
-| 2 | Short-MOC 1 IWM ohne Position | **offen**: nur 15:30–15:49 ET, die Schlüssel kamen am 15.10. erst nach Börsenschluss |
+| 2 | Short-MOC 1 IWM ohne Position | **offen**: nur 15:30–15:49 ET, die Schlüssel kamen am 15.10. erst nach Börsenschluss. **Termin gesetzt: Fr 16.10., 21:33 MESZ** (diese Sitzung führt 2, 4, 6 dann aus und trägt das Ergebnis hier ein) |
 | 3 | SVXY-Marge, Kaufkraft | **bestanden**: SVXY marginable, Wartungsmarge 30 %, nicht leihbar; Reg-T-Kaufkraft 200.000 $ (2×), Deckel des Bots 190.000 $ |
 | 4 | Long 1 SPY, Verkauf 2 SPY MOC | **offen**: Fenster |
 | 5 | VIX im ersten Actions-`dry`-Lauf | **offen**: lokal kam der VIX von Yahoo query1. Auf GitHub-IPs zeigt es dein erster `dry`-Lauf in `STATUS-dry.md` („Quelle: …“) |
@@ -91,12 +95,13 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 
 ## Offen
 
-- Paper-Prüfungen 2, 4, 6: Mo–Fr zwischen 21:30 und 21:49 MESZ, nächster Termin Fr 16.10. Ab 26.10. (MEZ, USA noch Sommerzeit) eine Stunde früher, 20:30–20:49. Befehl unten. **Vor dem ersten Live-Lauf**, weil die Test-Orders sonst den Positionsabgleich stören.
+- Paper-Prüfungen 2, 4, 6: Termin in dieser Sitzung gesetzt für Fr 16.10., 21:33 MESZ (mit deinen jetzigen Paper-Schlüsseln, Konto ist flach). Erzeugst du die Schlüssel vorher neu, bekommt der Termin 401 und meldet das, dann bitte selbst ausführen (Klick 5). Allgemein Mo–Fr zwischen 21:30 und 21:49 MESZ. Ab 26.10. (MEZ, USA noch Sommerzeit) eine Stunde früher, 20:30–20:49. Befehl unten. **Vor dem ersten Live-Lauf**, weil die Test-Orders sonst den Positionsabgleich stören.
 - Prüfung 5 und der grüne Actions-`dry`-Lauf brauchen die Secrets.
 - Entscheidung zur Sperre auf der Kaufseite: Wenn Prüfung 6 die zweite Kauforder annimmt, genügt in `systembuch_bot.py` die Zeile `VORZEICHENWECHSEL_SPERRE = 'verkauf'`. Zwei Kauforders sind gebaut und getestet (Dauertest 2022 auf den Cent gleich dem Replay, Ablehnung der zweiten Order sauber abgefangen). TSMOM unter Live-Bedingungen: Sitzung mit dir, vorab festgeschriebener Test.
 - BB-Stop nach MOC-Kauf im selben Symbol: Wegen Alpacas Wash-Trade-Schutz bleibt das Leg bis zum nächsten Lauf ohne Stop (Replay: 227 Leg-Tage, Wirkung ≈ 0). Lückenlos ginge es nur mit einem Stop-Nachlauf um ≈ 16:05 ET, also außerhalb deines Orderfensters (Regel 4). Deine Entscheidung, nicht gebaut.
 - Randfall: Ein BB-Long und ein TSMOM-Short im selben ETF mit netto Short-Bestand. Dann ist der GTC-Stop des BB-Legs bei Alpaca ein Leerverkaufs-Stop. Lehnt Alpaca ihn ab, gibt es eine Warnung im STATUS, und der Stop fehlt bis zum Ausstieg.
 - Review 1.7 (BB-Signal am Ex-Dividenden-Tag): beobachten, wenn SPY ex geht.
+- Splits: Ein (Reverse-)Split während einer Haltephase (UNG, USO hatten mehrere) lässt Legs und Alpaca-Position auseinanderlaufen → „ABGLEICH NÖTIG“, Stückzahl des Legs in `state.json` von Hand anpassen. Automatik nicht gebaut.
 - K4-Variante „TSMOM-Reservierung“: Auslegung prüfen (Entscheidung 11).
 - Kalender, Monatswechsel-Termine und Wochenbericht laufen im Echtbetrieb erstmals zum Monatsende Oktober (29./30.10.).
 

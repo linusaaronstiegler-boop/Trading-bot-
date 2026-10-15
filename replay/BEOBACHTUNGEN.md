@@ -30,6 +30,9 @@ Lückenlos ginge es nur mit einem Stop-Nachlauf nach Börsenschluss (≈ 16:05 E
 
 +2,8 Punkte p.a. (zweitgrößter Beitrag) aus 80 Trades mit 34 % Treffern und Ø +637 bp je Trade. Live ohne VIX: +8,1 % p.a. (K3-Modell +10,1 %). In der README steht die Regel als „Experiment“ (C16). Der Beitrag hängt an wenigen langen Haltephasen (Ø 41 Tage). Außerdem hat sich das Produkt geändert: SVXY war bis 27.02.2018 −1× und ist seitdem −0,5×.
 
+- **Zeitpunkt der Entscheidung:** Der Replay nimmt (wie K3) den Yahoo-Schluss von ^VIX/^VIX3M. Das ist der CBOE-Wert von 16:15 ET, SVXY schließt aber um 16:00, und der Bot entscheidet um 15:45. Die tragenden Ausstiege liegen knapp an der Schwelle: 02.02.2018 (Verhältnis 0,984, SVXY danach −32 % und −83 %) und 02.08.2024 (0,998, danach −21 %) bringen zusammen rund 36.000 $ der VIX-Summe. Variante `vix_vortag` (Entscheidung mit dem Vortagesschluss, pessimistische Schranke): live +9,3 % statt +10,2 % p.a., K3-Modell +11,1 % statt +12,0 %. Der wahre 15:45-Wert liegt dazwischen, näher am Schluss. Messen ließe er sich nur mit CBOE-Intraday-Historie (nicht frei verfügbar). Live kann man es ab dem ersten Monat vergleichen: STATUS zeigt das Verhältnis um 15:45, der Schluss steht am Folgetag bei Yahoo.
+- **Ein Einstiegstag entscheidet ein Jahr:** Handelt man SVXY schon ab Auflage (04.10.2011) statt ab 60 Handelstagen Historie (29.12.2011, so rechnen der Bot und K3), fällt der erste Dauer-Einstieg auf den 10.11.2011, mitten in die Bremse (×0,5). Diese eine Haltephase läuft mit halber Größe bis 28.12.2012: 2012 bringt dann +16,8 % statt +21,1 %, der VIX-Beitrag sinkt von 2,8 auf 2,4 Punkte p.a., das Buch von 12,05 auf 11,84 % (K3-Modell). Ein VIX-Leg wird nach dem Einstieg nie neu gewichtet. Der Beitrag hängt also stark davon ab, in welcher Bremsphase ein langer Contango-Abschnitt beginnt.
+
 ## 3. IBS-Sektor ist auf Trade-Ebene schwach
 
 Ø +5,5 bp (K3-Modell) bzw. +6,0 bp (live) je Trade, t 1,4–1,6. Der Einzeltest C4 nennt t 2,8. Beitrag im Buch +0,3–0,4 Punkte. K4 hat „ohne IBS-Sektor“ geprüft und verworfen, das bleibt so.
@@ -42,5 +45,7 @@ Live +0,3 Punkte p.a. (Summe −4.400 $), im K3-Modell +0,6. Die Korrelation zu 
 
 - K6: Die Rückrechnung entscheidet am Schluss, der Bot schon um 15:45. Laut README sind deshalb für IBS rund −0,4 und für IBS-Land rund −0,6 Punkte p.a. abzuziehen. Live liegt die Erwartung also eher bei +9 % als bei +10 %.
 - MOC-Fill gegen Schlusskurs: Das misst der Live-Bot im Journal (`abweichung_bp`).
-- Die Leihbarkeit ist die K3-Annahme (EWG, USO, FXE nicht leihbar), bis `assets.json` von Alpaca eingefroren ist.
+- Die Leihbarkeit kommt aus `assets.json` (Alpaca, 15.10.2026): EWG, USO, FXE nicht leihbar, genau die K3-Annahme.
+- Stückzahl aus Yahoos `close` (nur split-bereinigt), wie K3. Bei UNG und USO war der echte Kurs 2010–2012 viel niedriger (UNG ≈ 10 $ statt 1.362 $ bereinigt), deshalb rundet der Replay dort gröber als live (TSMOM-UNG ≈ 2,6 statt 3,1 Stück). Wirkung höchstens ≈ 0,16 Punkte p.a., live ohne Bedeutung (Alpaca liefert echte Kurse).
+- Aktiensplits während einer Haltephase gleicht der Live-Bot nicht aus: Nach einem Reverse-Split (UNG, USO hatten mehrere) stimmen Legs und Alpaca-Position nicht mehr überein, der Positionsabgleich hält den Bot an („ABGLEICH NÖTIG“), dann ist ein Eingriff von Hand nötig (Stückzahl des Legs in `state.json` anpassen). Selten, aber vorhersehbar: Split-Termine stehen vorab in den Alpaca-Corporate-Actions.
 - Abschaltkriterium K5 auf beiden Replay-Pfaden: schlechteste 12-Monats-Rendite −18,6 % (24.12.2018), tiefste 250-Tage-Sharpe −1,20 (03.01.2019), Maximalverlust 26,7 % bzw. 24,1 %. Es hätte also nicht ausgelöst.

@@ -76,10 +76,10 @@ def test_zeitraum_ohne_tresor(tmp_path):
     assert 'enthält den Tresor nicht' in (tmp_path / 'BERICHT.md').read_text()
 
 
-def test_svxy_ab_auflage_handelbar():
-    """SPEC 3 / K3: SVXY ab Auflage 10/2011, nicht erst nach 60 Handelstagen."""
+def test_svxy_wie_k3_ab_60_handelstagen():
+    """K3 hat 80 VIX-Trades und 2012 +21 % – das ergibt sich nur mit SVXY ab 60 Handelstagen Historie (29.12.2011), nicht ab
+    Auflage 04.10.2011 (dann 83 Trades, 2012 +16,8 %: erster Einstieg 10.11.2011 mitten in der Bremse). Bewusst wie K3."""
     D = replay.Daten('2011-12-30')
-    i0, i1 = D.index_ab('2011-10-04'), D.index_bis('2011-10-31')
+    i0, i1 = D.index_ab('2011-10-04'), D.index_bis('2011-12-30')
     KZ = replay.kennzahlen_alle(D, i0, i1)
-    erster = next(D.tage[i] for i in range(i0, i1 + 1) if 'SVXY' in KZ[i])
-    assert erster <= '2011-10-05' and KZ[D.pos[erster]]['SVXY']['atr20'] >= 0
+    assert next(D.tage[i] for i in range(i0, i1 + 1) if 'SVXY' in KZ[i]) == '2011-12-29'

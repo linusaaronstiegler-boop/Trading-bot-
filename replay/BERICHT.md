@@ -111,6 +111,7 @@ Beitrag p.a. = Ø tägliches Ergebnis der Strategie / Vortages-Equity × 252. Ø
 | ibs_allein | +5,0 % | 0,63 | 12,8 % | +5,0 % | 0,63 | 12,8 % | – |
 | tsmom_allein | +1,7 % | 0,53 | 7,7 % | +1,7 % | 0,54 | 7,9 % | – |
 | vix_allein | +3,1 % | 0,60 | 7,6 % | +3,1 % | 0,60 | 7,6 % | – |
+| vix_vortag | +9,3 % | 0,64 | 30,2 % | +11,1 % | 0,71 | 23,9 % | – |
 
 ## Tresor ab 02.10.2023
 
@@ -129,6 +130,7 @@ Ohne Sperre +12,0 % p.a., mit Sperre nur long→short +12,1 %, mit Sperre in bei
 - Kennzahlen wie live: Historie relativ zum Entscheidungstag bereinigt (Alpaca `adjustment=all`); dadurch ATR aus der bereinigten statt der Rohreihe (K3: roh). Unterschied nur an Ex-Tagen.
 - Live-Modell mit Vorzeichenwechsel-Sperre (Review 3.2); K3-Modell ohne.
 - BB-Stop ab t0+2 intraday, Fill min(Eröffnung, Stop) – wie K3 (live wird der Stop schon am Ende von t0+1 gesetzt; nicht abgebildet).
-- SVXY erst nach 60 Handelstagen Historie handelbar (gleiche Bedingung wie live in `kern.kennzahlen`), also ab Januar 2012 statt Oktober 2011.
+- SVXY handelbar ab 60 Handelstagen Historie (29.12.2011, Bedingung in `kern.kennzahlen`, live immer erfüllt). Das trifft K3 genau (80 VIX-Trades, 2012 +21 %); ab Auflage 04.10.2011 wären es 83 Trades, VIX-Beitrag 2,4 statt 2,8 Punkte (BEOBACHTUNGEN 2).
+- VIX-Contango entscheidet mit dem Yahoo-Schluss von ^VIX/^VIX3M (CBOE 16:15 ET), live um 15:45. Variante `vix_vortag` (Vortagesschluss) zeigt die pessimistische Schranke.
 - Fill = Schlusskurs. Die MOC-Abweichung misst der Live-Bot im Journal (`abweichung_bp`). K6 (Signal 15:45 statt Schluss) ist nicht enthalten: Erwartung IBS ≈ −0,4, IBS-Land ≈ −0,6 Punkte p.a. (README).
 - Keine Leihkosten, keine Zinsen (wie K3).

@@ -14,7 +14,8 @@ Modell (Abweichungen zu K3 stehen in replay/BERICHT.md):
   - BB-Stop: live wird er im Lauf nach dem Einstieg (t0+1, 15:45) als GTC gesetzt → im Replay ab t0+2 intraday,
     Fill zu min(Eröffnung, Stop) wie in K3; die letzten 15 Minuten von t0+1 fehlen.
   - Vorzeichenwechsel-Sperre wie live (heute nur bis null); Variante `sperre_aus` zeigt den K3-Vergleich ohne Sperre.
-  - SVXY ab Auflage 04.10.2011 (wie K3); in den ersten 60 Handelstagen ergänzt kz_svxy_frueh() Kurs und ATR, weil kern.kennzahlen 60 Tage verlangt.
+  - SVXY ab Auflage 04.10.2011 geladen, handelbar ab 60 Handelstagen Historie (kern.kennzahlen, wie live) = 29.12.2011. So rechnet
+    auch K3 (80 VIX-Trades, 2012 +21 %); Handel ab Auflage ergäbe 83 Trades und 2012 nur +16,8 % (BEOBACHTUNGEN 2).
   - Keine Leihkosten, keine Zinsen auf Bargeld oder Marge (wie K3).
 """
 import argparse, csv, datetime as dt, hashlib, inspect, json, math, os, pickle, sys, time, urllib.request
@@ -81,7 +82,7 @@ class Daten:
         # Fingerabdruck für den Kennzahlen-Cache: vollständige Kursdateien + Quelltext der Kennzahl-Berechnung (Review v2)
         h = hashlib.sha1()
         for s in sorted(roh): h.update(s.encode()); h.update(pd.util.hash_pandas_object(roh[s], index=True).values.tobytes())
-        for f in (kern.kennzahlen, kennzahlen_alle, kz_svxy_frueh): h.update(inspect.getsource(f).encode())
+        for f in (kern.kennzahlen, kennzahlen_alle): h.update(inspect.getsource(f).encode())
         self.fingerabdruck = h.hexdigest()[:12]
 
     def index_ab(self, d):
@@ -112,17 +113,9 @@ def kennzahlen_alle(D, i0, i1):
                                (A['l'][idx] * f).tolist(), (A['c'][idx] * f).tolist()))
             live[s] = dict(px=float(A['c'][i]), hi=float(A['h'][i]), lo=float(A['l'][i]))
         out[i] = kern.kennzahlen(hist, live)
-        if kern.VIX_ETF not in out[i] and kern.VIX_ETF in live: out[i][kern.VIX_ETF] = kz_svxy_frueh(hist.get(kern.VIX_ETF, []), live[kern.VIX_ETF])
     with open(fn, 'wb') as f: pickle.dump(out, f)
     print(f'Kennzahlen {D.tage[i0]}–{D.tage[i1]} berechnet ({time.time() - t0:.0f} s), Cache {os.path.basename(fn)}')
     return out
-
-
-def kz_svxy_frueh(rows, live):
-    """SVXY in den ersten 60 Handelstagen nach Auflage (04.10.2011): kern.kennzahlen verlangt 60 Tage Historie, die VIX-Regel braucht
-    aber nur Kurs und (fürs Leg) ATR. Live greift die 60-Tage-Bedingung nie – der Replay handelt SVXY deshalb wie K3 ab Auflage (SPEC 3)."""
-    tr = [max(rows[i][2] - rows[i][3], abs(rows[i][2] - rows[i - 1][4]), abs(rows[i][3] - rows[i - 1][4])) for i in range(1, len(rows))][-20:]
-    return dict(px=live['px'], hi=live['hi'], lo=live['lo'], ibs=0.5, atr20=sum(tr) / len(tr) if tr else 0.0, sma20=None, sma200=None, bb_unten=None)
 
 
 def leihbarkeit():
@@ -582,7 +575,8 @@ def bericht(a, R, tresor, st, ko, jr, leih_quelle):
           '- Kennzahlen wie live: Historie relativ zum Entscheidungstag bereinigt (Alpaca `adjustment=all`); dadurch ATR aus der bereinigten statt der Rohreihe (K3: roh). Unterschied nur an Ex-Tagen.',
           '- Live-Modell mit Vorzeichenwechsel-Sperre (Review 3.2); K3-Modell ohne.',
           '- BB-Stop ab t0+2 intraday, Fill min(Eröffnung, Stop) – wie K3 (live wird der Stop schon am Ende von t0+1 gesetzt; nicht abgebildet).',
-          '- SVXY ab Auflage (04.10.2011) wie K3; für die ersten 60 Handelstage ergänzt der Replay Kurs und ATR (live hat SVXY immer genug Historie).',
+          '- SVXY handelbar ab 60 Handelstagen Historie (29.12.2011, Bedingung in `kern.kennzahlen`, live immer erfüllt). Das trifft K3 genau '
+          '(80 VIX-Trades, 2012 +21 %); ab Auflage 04.10.2011 wären es 83 Trades, VIX-Beitrag 2,4 statt 2,8 Punkte (BEOBACHTUNGEN 2).',
           '- VIX-Contango entscheidet mit dem Yahoo-Schluss von ^VIX/^VIX3M (CBOE 16:15 ET), live um 15:45. Variante `vix_vortag` (Vortagesschluss) '
           'zeigt die pessimistische Schranke.',
           '- Fill = Schlusskurs. Die MOC-Abweichung misst der Live-Bot im Journal (`abweichung_bp`). K6 (Signal 15:45 statt Schluss) ist nicht enthalten: '
