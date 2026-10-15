@@ -700,6 +700,7 @@ def abwicklungs_legs(st, differenz, heute):
 
 
 def lauf(a):
+    ohne_datei = not os.path.exists('state.json')
     st = laden()
     clock = alp('/v2/clock'); jetzt = zeit(clock['timestamp']); heute_d = jetzt.astimezone(NY).date(); heute = heute_d.isoformat()
     naechster_schluss = zeit(clock['next_close']); min_bis_schluss = (naechster_schluss - jetzt).total_seconds() / 60
@@ -710,6 +711,18 @@ def lauf(a):
     if st.get('letzter_lauf') == heute and not a.force:
         log('heute schon gelaufen – Ende'); return dict(ende='schon gelaufen')
     t_start = time.monotonic()
+    if not st.get('start') and (csv_lesen('equity.csv') or csv_lesen('journal.csv')) and not st.get('neustart'):
+        # Review 2.5: Der Bot hat schon gehandelt, aber Start/Startkapital/Höchststand fehlen. Gelöschte state.json = Neustart
+        # nach README („state.json dann von Hand löschen“) → laut melden. Vorhandene state.json ohne Start (von Hand gebaut,
+        # beschädigt) → nicht still mit Startkapital = heutige Equity weiter (Not-Aus-Schwelle, Bremse und K5 wären zurückgesetzt).
+        if ohne_datei:
+            log('WARNUNG: NEUSTART – state.json fehlt, equity.csv/journal.csv zeigen frühere Läufe – Startkapital und Höchststand '
+                'beginnen heute neu (README: Neustart nach Not-Aus). War das nicht gewollt: state.json aus der Git-Historie zurückholen.')
+        else:
+            text = ('state.json ohne start/startkapital, aber equity.csv/journal.csv zeigen frühere Läufe – start, startkapital und hwm '
+                    'aus der Git-Historie wiederherstellen oder für einen gewollten Neustart "neustart": true setzen')
+            if not a.dry: raise Abbruch('ZUSTAND FEHLT', text)
+            log(f'WARNUNG: ZUSTAND FEHLT (dry: rechne mit heutiger Equity weiter): {text}')
     if not a.dry and heutige_bot_orders(heute_d):
         # Bot-Orders von heute bei Alpaca, aber state.json kennt sie nicht → veralteter Stand (z. B. Nachläufer mit altem Checkout).
         # Nichts stornieren, nichts senden, keine Datei schreiben (Review v2, Befund „Nachläufer“).
@@ -763,7 +776,7 @@ def lauf(a):
     entscheidung_zeit = uhr['jetzt'].astimezone(NY).strftime('%H:%M:%S')
 
     konto = alp('/v2/account'); eq = float(konto['equity'])
-    if st['startkapital'] is None: st.update(start=heute, startkapital=eq, hwm=eq, letzte_tsmom=heute)
+    if st['startkapital'] is None: st.update(start=heute, startkapital=eq, hwm=eq, letzte_tsmom=heute); st.pop('neustart', None)
     st['hwm'] = hwm_pruefen(st, reihe, eq); dd = 1 - eq / st['hwm']
     live = snapshots(list(ALLE_SYMBOLE))
     vix, vix3m, vix_quelle = lade_vix()

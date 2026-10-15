@@ -46,18 +46,7 @@ jobs:
           else
             python3 systembuch_bot.py
           fi
-      - name: Stand speichern
-        if: always()
-        run: |
-          git config user.name "systembuch-bot"
-          git config user.email "bot@users.noreply.github.com"
-          for f in state.json journal.csv equity.csv STATUS.md STATUS-dry.md log.txt; do [ -f "$f" ] && git add -f -- "$f"; done
-          [ -d berichte ] && git add -f -- berichte
-          if ! git diff --cached --quiet; then
-            git commit -m "Lauf $(date -u +%F)"
-            for i in 1 2 3; do git pull --rebase origin main && git push && break || sleep 10; done
-          fi
-      - name: Zustand als Artifact (Review 5.6)
+      - name: Zustand als Artifact (Review 5.6, vor dem Commit, also immer der eigene Stand)
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -71,6 +60,23 @@ jobs:
             log.txt
           if-no-files-found: ignore
           retention-days: 30
+      - name: Stand speichern
+        if: always()
+        run: |
+          git config user.name "systembuch-bot"
+          git config user.email "bot@users.noreply.github.com"
+          for f in state.json journal.csv equity.csv STATUS.md STATUS-dry.md log.txt; do [ -f "$f" ] && git add -f -- "$f"; done
+          [ -d berichte ] && git add -f -- berichte
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Lauf $(date -u +%F)"
+          # Review v2 (5.6/6.7): Scheitert der Push dreimal (Konflikt, Branch-Schutz), wird der Lauf rot → Issue-Alarm.
+          for i in 1 2 3; do
+            if git pull --rebase origin "$GITHUB_REF_NAME" && git push origin "HEAD:$GITHUB_REF_NAME"; then exit 0; fi
+            git rebase --abort 2>/dev/null || true
+            sleep 10
+          done
+          echo "Push dreimal gescheitert – der Stand dieses Laufs liegt im Artifact zustand-$GITHUB_RUN_ID" >&2
+          exit 1
       - name: Alarm als GitHub-Issue (roter Lauf)
         if: failure() && github.event_name == 'schedule'
         env:

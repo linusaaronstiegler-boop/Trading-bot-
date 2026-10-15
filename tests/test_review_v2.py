@@ -224,3 +224,30 @@ def test_journal_wird_nicht_doppelt_geschrieben(monkeypatch, tmp_path):
     zeilen = list(__import__('csv').DictReader(open(tmp_path / 'journal.csv')))
     keys = [(z['id'], z['ausstieg_datum'], z['stueck'], z['grund']) for z in zeilen]
     assert len(keys) == len(set(keys)) and len(zeilen) >= n1
+
+
+def test_state_json_ohne_start_startet_nicht_still_neu(monkeypatch, tmp_path):
+    """Review 2.5: state.json ohne start/startkapital (von Hand gebaut, beschädigt), aber equity.csv aus früheren Läufen →
+    kein stiller Neustart mit Startkapital = heutige Equity, sondern rot „ZUSTAND FEHLT“. Gelöschte state.json ist der
+    README-Weg für einen Neustart nach Not-Aus → läuft, aber mit Warnung. Ausdrücklich: neustart=true."""
+    b, fx = broker(monkeypatch, tmp_path); b.neuer_tag('2025-02-27')
+    (tmp_path / 'equity.csv').write_text('datum,equity\n2025-02-25,120000\n2025-02-26,85000\n')
+    json.dump(dict(legs=[], naechste_id=1), open(tmp_path / 'state.json', 'w'))
+    r, code = lauf()
+    assert code == 1 and 'ZUSTAND FEHLT' in open(tmp_path / 'STATUS.md').read()
+    assert not [o for o in b.orders.values() if o['time_in_force'] == 'cls']
+    r, code = lauf(['--dry', '--force'])                                                    # dry: nur Warnung, rechnet weiter
+    assert code == 0 and any('ZUSTAND FEHLT' in z for z in v2.LOGZEILEN)
+    json.dump(dict(legs=[], naechste_id=1, neustart=True), open(tmp_path / 'state.json', 'w'))
+    r, code = lauf()
+    st = zustand(tmp_path)
+    assert code == 0 and st['start'] == '2025-02-27' and 'neustart' not in st
+
+
+def test_geloeschte_state_json_ist_neustart_mit_warnung(monkeypatch, tmp_path):
+    b, fx = broker(monkeypatch, tmp_path); b.neuer_tag('2025-02-27')
+    os.remove(tmp_path / 'state.json')
+    (tmp_path / 'equity.csv').write_text('datum,equity\n2025-02-25,120000\n2025-02-26,85000\n')
+    r, code = lauf()
+    assert code == 0 and zustand(tmp_path)['start'] == '2025-02-27'
+    assert 'NEUSTART – state.json fehlt' in open(tmp_path / 'STATUS.md').read()

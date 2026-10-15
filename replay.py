@@ -14,10 +14,11 @@ Modell (Abweichungen zu K3 stehen in replay/BERICHT.md):
   - BB-Stop: live wird er im Lauf nach dem Einstieg (t0+1, 15:45) als GTC gesetzt → im Replay ab t0+2 intraday,
     Fill zu min(Eröffnung, Stop) wie in K3; die letzten 15 Minuten von t0+1 fehlen.
   - Vorzeichenwechsel-Sperre wie live (heute nur bis null); Variante `sperre_aus` zeigt den K3-Vergleich ohne Sperre.
-  - SVXY ab Auflage 04.10.2011, nutzbar ab 60 Handelstagen Historie (Bedingung in kern.kennzahlen, wie live).
+  - SVXY ab Auflage 04.10.2011 (wie K3); in den ersten 60 Handelstagen ergänzt kz_svxy_frueh() Kurs und ATR, weil kern.kennzahlen 60 Tage verlangt.
   - Keine Leihkosten, keine Zinsen auf Bargeld oder Marge (wie K3).
 """
-import argparse, csv, datetime as dt, hashlib, json, math, os, pickle, sys, time, urllib.request
+import argparse, csv, datetime as dt, hashlib, inspect, json, math, os, pickle, sys, time, urllib.request
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -59,6 +60,9 @@ def lade(sym, ende):
     df = pd.DataFrame(dict(o=q['open'], h=q['high'], l=q['low'], c=q['close'], v=q['volume'], adj=adj), index=pd.Index(idx, name='datum'))
     df = df[~df.index.duplicated(keep='last')].dropna(subset=['o', 'h', 'l', 'c'])
     df = df[(df.h >= df.l) & (df.c > 0)]
+    jetzt = dt.datetime.now(ZoneInfo('America/New_York'))                              # laufende Tageskerze nie speichern (Review v2):
+    fertig = jetzt.date().isoformat() if jetzt.time() >= dt.time(16, 15) else (jetzt.date() - dt.timedelta(days=1)).isoformat()
+    df = df[df.index <= min(ende, fertig)]                                               # nur abgeschlossene Tage bis `ende`
     df.to_csv(fn)
     return df
 
@@ -74,7 +78,11 @@ class Daten:
         for s, df in roh.items():
             df = df.reindex(self.tage)
             self.a[s] = {k: df[k].to_numpy(dtype=float) for k in ('o', 'h', 'l', 'c', 'adj')}
-        self.fingerabdruck = hashlib.sha1(json.dumps({s: [len(df), str(df.index[-1]), float(df['adj'].iloc[-1])] for s, df in roh.items()}).encode()).hexdigest()[:12]
+        # Fingerabdruck für den Kennzahlen-Cache: vollständige Kursdateien + Quelltext der Kennzahl-Berechnung (Review v2)
+        h = hashlib.sha1()
+        for s in sorted(roh): h.update(s.encode()); h.update(pd.util.hash_pandas_object(roh[s], index=True).values.tobytes())
+        for f in (kern.kennzahlen, kennzahlen_alle, kz_svxy_frueh): h.update(inspect.getsource(f).encode())
+        self.fingerabdruck = h.hexdigest()[:12]
 
     def index_ab(self, d):
         return next(i for i, t in enumerate(self.tage) if t >= d)
@@ -104,9 +112,17 @@ def kennzahlen_alle(D, i0, i1):
                                (A['l'][idx] * f).tolist(), (A['c'][idx] * f).tolist()))
             live[s] = dict(px=float(A['c'][i]), hi=float(A['h'][i]), lo=float(A['l'][i]))
         out[i] = kern.kennzahlen(hist, live)
+        if kern.VIX_ETF not in out[i] and kern.VIX_ETF in live: out[i][kern.VIX_ETF] = kz_svxy_frueh(hist.get(kern.VIX_ETF, []), live[kern.VIX_ETF])
     with open(fn, 'wb') as f: pickle.dump(out, f)
     print(f'Kennzahlen {D.tage[i0]}–{D.tage[i1]} berechnet ({time.time() - t0:.0f} s), Cache {os.path.basename(fn)}')
     return out
+
+
+def kz_svxy_frueh(rows, live):
+    """SVXY in den ersten 60 Handelstagen nach Auflage (04.10.2011): kern.kennzahlen verlangt 60 Tage Historie, die VIX-Regel braucht
+    aber nur Kurs und (fürs Leg) ATR. Live greift die 60-Tage-Bedingung nie – der Replay handelt SVXY deshalb wie K3 ab Auflage (SPEC 3)."""
+    tr = [max(rows[i][2] - rows[i][3], abs(rows[i][2] - rows[i - 1][4]), abs(rows[i][3] - rows[i - 1][4])) for i in range(1, len(rows))][-20:]
+    return dict(px=live['px'], hi=live['hi'], lo=live['lo'], ibs=0.5, atr20=sum(tr) / len(tr) if tr else 0.0, sma20=None, sma200=None, bb_unten=None)
 
 
 def leihbarkeit():
@@ -119,7 +135,8 @@ def leihbarkeit():
 
 
 # ---------- Simulation ----------
-def simuliere(D, KZ, i0, i1, param=None, sperre='beide', kosten_bp=3.0, startkapital=100000.0, leihbar=None, kal=None, stop_luecke=None):
+def simuliere(D, KZ, i0, i1, param=None, sperre='beide', kosten_bp=3.0, startkapital=100000.0, leihbar=None, kal=None, stop_luecke=None,
+              vix_versatz=0):
     """Tag für Tag: Bewertung → BB-Stops → kern.entscheide → kern.netto_orders → Ausführung zum Schluss.
     → dict(tage DataFrame, trades DataFrame, info)"""
     kosten = kosten_bp / 1e4
@@ -128,6 +145,9 @@ def simuliere(D, KZ, i0, i1, param=None, sperre='beide', kosten_bp=3.0, startkap
     zeilen, trades = [], []
     stat = dict(gekreuzt=0, verfallen=0, aufgeschoben=0, verfallen_stueck_wert=0.0, stopps=0)
     vix, vix3 = D.a['^VIX']['c'], D.a['^VIX3M']['c']
+    # Yahoo-Tagesschluss von ^VIX/^VIX3M = CBOE-Wert von 16:15 ET, SVXY schließt 16:00, live entscheidet der Bot 15:45 (Review v2).
+    # vix_versatz=1: Entscheidung mit dem Vortagesschluss – untere Schranke für den Wert um 15:45 (nur Messung, keine Regel).
+    if vix_versatz: vix, vix3 = np.concatenate([[np.nan] * vix_versatz, vix[:-vix_versatz]]), np.concatenate([[np.nan] * vix_versatz, vix3[:-vix_versatz]])
 
     def schliessen(leg, menge, preis_wert, d, i, grund, kosten_teil):
         """Teil `menge` des Legs zum Wert `preis_wert` (Gesamtwert dieses Teils) schließen."""
@@ -337,7 +357,7 @@ def abweichung(ist, soll):
 VARIANTEN = {
     'ohne_tsmom': dict(ohne=('TSMOM',)), 'ohne_vix': dict(ohne=('VIX',)), 'ohne_mw_land': dict(ohne=('MW_LAND',)),
     'nur_ibs_familie': dict(nur=kern.IBS_FAMILIE), 'ibs_allein': dict(nur=('IBS',)), 'tsmom_allein': dict(nur=('TSMOM',)),
-    'vix_allein': dict(nur=('VIX',)),
+    'vix_allein': dict(nur=('VIX',)), 'vix_vortag': dict(vix_versatz=1),
 }
 
 
@@ -369,7 +389,7 @@ def argumente(argv):
 def lauf(D, KZ, i0, i1, a, leihbar, kal, spy, sperre, **v):
     param = param_aus(a, v.get('ohne', ()), v.get('nur'))
     t0 = time.time()
-    erg = simuliere(D, KZ, i0, i1, param, sperre, a.kosten_bp, a.startkapital, leihbar, kal)
+    erg = simuliere(D, KZ, i0, i1, param, sperre, a.kosten_bp, a.startkapital, leihbar, kal, vix_versatz=v.get('vix_versatz', 0))
     erg.update(startkapital=a.startkapital, vortag=D.tage[i0 - 1], dauer=time.time() - t0)
     k, eq0 = auswerten(erg, D, spy)
     return dict(erg=erg, k=k, eq0=eq0)
@@ -404,8 +424,12 @@ def main(argv=None):
 
 
 def tresor_kz(eq0, spy):
-    vor = eq0[eq0.index < '2023-10-02'].index[-1]
-    return kennzahlen(eq0[eq0.index >= vor], spy.reindex(eq0[eq0.index >= vor].index))
+    """Tresor ab 02.10.2023 (README). None, wenn der Zeitraum den Tresor nicht enthält (z. B. Lernzeit-Lauf bis 2019)."""
+    vor = eq0[eq0.index < '2023-10-02'].index
+    vor = vor[-1] if len(vor) else eq0.index[0]                                          # Zeitraum beginnt nach dem Tresor-Start
+    teil = eq0[eq0.index >= vor]
+    if len(teil) < 3 or teil.index[-1] < '2023-10-02': return None
+    return kennzahlen(teil, spy.reindex(teil.index))
 
 
 def schreibe_berichte(a, R, spy, leih_quelle, kal):
@@ -430,7 +454,7 @@ def schreibe_berichte(a, R, spy, leih_quelle, kal):
                 f'Systembuch-Replay {eq0.index[1]} – {eq0.index[-1]} (100.000 $, 3 bp je Seite)')
     bild_brutto(t, os.path.join(aus, 'brutto.png'))
     json.dump(dict(stand=dt.date.today().isoformat(), zeitraum=[eq0.index[1], eq0.index[-1]], leihbarkeit=leih_quelle, kalender=kal.quelle,
-                   modelle={m: dict(haupt=_json(R[m]['haupt']['k']), tresor=_json(tresor[m]),
+                   modelle={m: dict(haupt=_json(R[m]['haupt']['k']), tresor=_json(tresor[m]) if tresor[m] else None,
                                     varianten={n: _json(x['k']) for n, x in R[m].items() if n != 'haupt'},
                                     beitrag={s: float(st[m].loc[s, 'beitrag_pa']) for s in STRATEGIEN}) for m in R}),
               open(os.path.join(aus, 'kennzahlen.json'), 'w'), indent=1, ensure_ascii=False, default=str)
@@ -479,7 +503,9 @@ def bericht(a, R, tresor, st, ko, jr, leih_quelle):
         fett = schl in FETT
         ab_k = abweichung(ist_k, soll) if ist_k is not None else float('nan'); ab_l = abweichung(ist_l, soll)
         z.append(f"| {'**' + name + '**' if fett else name} | {fmt(soll)} | {fmt(ist_k) if ist_k is not None else '–'} | "
-                 f"{'–' if ab_k != ab_k else f'{ab_k * 100:+.0f} %'} | {_urteil(ab_k, fett)} | {fmt(ist_l)} | {ab_l * 100:+.0f} % |")
+                 f"{'–' if ab_k != ab_k else f'{ab_k * 100:+.0f} %'} | {_urteil(ab_k, fett)} | {fmt(ist_l)} | {'–' if ab_l != ab_l else f'{ab_l * 100:+.0f} %'} |")
+    def kor(m, x, y):                                                                    # Strategie ohne Ergebnis (K4-Schalter, --nur) hat keine Spalte
+        k = ko.get(m); return float(k.loc[x, y]) if k is not None and x in k.columns and y in k.columns else float('nan')
     g = lambda d, x: d[x] if d else None
     zeile('Rendite p.a.', K3['cagr'], g(kk, 'cagr'), kl['cagr'], p, 'cagr')
     zeile('Schwankung', K3['vol'], g(kk, 'vol'), kl['vol'], p, 'vol')
@@ -493,9 +519,10 @@ def bericht(a, R, tresor, st, ko, jr, leih_quelle):
     zeile('Beta zu SPY', K3['beta'], g(kk, 'beta'), kl['beta'], zahl, 'beta')
     for s in STRATEGIEN:
         zeile(f'Beitrag {NAMEN[s]} p.a.', K3['beitrag'][s], st['k3'].loc[s, 'beitrag_pa'] if K else None, st['live'].loc[s, 'beitrag_pa'], p, f'beitrag_{s}')
-    zeile('Tresor ab 02.10.2023 p.a.', K3['tresor_cagr'], g(tresor.get('k3'), 'cagr'), tresor['live']['cagr'], p, 'tresor_cagr')
-    zeile('Tresor Sharpe', K3['tresor_sharpe'], g(tresor.get('k3'), 'sharpe'), tresor['live']['sharpe'], zahl, 'tresor_sharpe')
-    zeile('Tresor Maximalverlust', K3['tresor_dd'], g(tresor.get('k3'), 'max_dd'), tresor['live']['max_dd'], pz1, 'tresor_dd')
+    if tresor['live']:
+        zeile('Tresor ab 02.10.2023 p.a.', K3['tresor_cagr'], g(tresor.get('k3'), 'cagr'), tresor['live']['cagr'], p, 'tresor_cagr')
+        zeile('Tresor Sharpe', K3['tresor_sharpe'], g(tresor.get('k3'), 'sharpe'), tresor['live']['sharpe'], zahl, 'tresor_sharpe')
+        zeile('Tresor Maximalverlust', K3['tresor_dd'], g(tresor.get('k3'), 'max_dd'), tresor['live']['max_dd'], pz1, 'tresor_dd')
     for n, soll in K3['varianten'].items():
         if n in L: zeile(f'Variante {n}', soll, K[n]['k']['cagr'] if K else None, L[n]['k']['cagr'], p, n)
     for n, soll in K3['allein'].items():
@@ -506,8 +533,8 @@ def bericht(a, R, tresor, st, ko, jr, leih_quelle):
         zeile('nur IBS-Familie Sharpe', K3['nur_ibs_familie_sharpe'], K['nur_ibs_familie']['k']['sharpe'] if K else None, L['nur_ibs_familie']['k']['sharpe'], zahl, 'x')
         zeile('nur IBS-Familie Maximalverlust', K3['nur_ibs_familie_dd'], K['nur_ibs_familie']['k']['max_dd'] if K else None, L['nur_ibs_familie']['k']['max_dd'], pz1, 'x')
     if K:
-        zeile('Korrelation IBS/IBS-Land', K3['korr']['IBS_IBS_LAND'], ko['k3'].loc['IBS', 'IBS_LAND'], ko['live'].loc['IBS', 'IBS_LAND'], zahl, 'x')
-        zeile('Korrelation MW/MW-Land', K3['korr']['MW_MW_LAND'], ko['k3'].loc['MW', 'MW_LAND'], ko['live'].loc['MW', 'MW_LAND'], zahl, 'x')
+        zeile('Korrelation IBS/IBS-Land', K3['korr']['IBS_IBS_LAND'], kor('k3', 'IBS', 'IBS_LAND'), kor('live', 'IBS', 'IBS_LAND'), zahl, 'x')
+        zeile('Korrelation MW/MW-Land', K3['korr']['MW_MW_LAND'], kor('k3', 'MW', 'MW_LAND'), kor('live', 'MW', 'MW_LAND'), zahl, 'x')
     z += ['', 'Fett = Kennzahl, bei der laut SPEC eine Abweichung über 15 % Fehlersuche heißt (Linus\' Regel 7: über 30 %). Geprüft wird das K3-Modell; '
           'die Spalte „live“ weicht nur wegen der Vorzeichenwechsel-Sperre ab (Abschnitt „Preis der Sperre“).', '']
     for m, k in (('live', kl), ('K3-Modell', kk)):
@@ -537,7 +564,8 @@ def bericht(a, R, tresor, st, ko, jr, leih_quelle):
         z.append(f"| {'Gesamtbuch' if n == 'haupt' else n} | {p(kv['cagr'])} | {zahl(kv['sharpe'])} | {pz1(kv['max_dd'])} | "
                  f"{p(kk_['cagr']) if kk_ else '–'} | {zahl(kk_['sharpe']) if kk_ else '–'} | {pz1(kk_['max_dd']) if kk_ else '–'} | {p(ref) if ref else '–'} |")
     z += ['', '## Tresor ab 02.10.2023', '']
-    for m in tresor:
+    if not tresor['live']: z.append('- Der Zeitraum enthält den Tresor nicht.')
+    for m in [m for m in tresor if tresor[m]]:
         tz = tresor[m]; z.append(f"- {'live' if m == 'live' else 'K3-Modell'}: {p(tz['cagr'])} p.a., Sharpe {zahl(tz['sharpe'])}, Maximalverlust {pz1(tz['max_dd'])} (Tief {tz['tief']}).")
     z.append('- K3: +17,1 % p.a., Sharpe 1,06, Maximalverlust 18,1 % (08.04.2025).')
     if K:
@@ -554,7 +582,9 @@ def bericht(a, R, tresor, st, ko, jr, leih_quelle):
           '- Kennzahlen wie live: Historie relativ zum Entscheidungstag bereinigt (Alpaca `adjustment=all`); dadurch ATR aus der bereinigten statt der Rohreihe (K3: roh). Unterschied nur an Ex-Tagen.',
           '- Live-Modell mit Vorzeichenwechsel-Sperre (Review 3.2); K3-Modell ohne.',
           '- BB-Stop ab t0+2 intraday, Fill min(Eröffnung, Stop) – wie K3 (live wird der Stop schon am Ende von t0+1 gesetzt; nicht abgebildet).',
-          '- SVXY erst nach 60 Handelstagen Historie handelbar (gleiche Bedingung wie live in `kern.kennzahlen`), also ab Januar 2012 statt Oktober 2011.',
+          '- SVXY ab Auflage (04.10.2011) wie K3; für die ersten 60 Handelstage ergänzt der Replay Kurs und ATR (live hat SVXY immer genug Historie).',
+          '- VIX-Contango entscheidet mit dem Yahoo-Schluss von ^VIX/^VIX3M (CBOE 16:15 ET), live um 15:45. Variante `vix_vortag` (Vortagesschluss) '
+          'zeigt die pessimistische Schranke.',
           '- Fill = Schlusskurs. Die MOC-Abweichung misst der Live-Bot im Journal (`abweichung_bp`). K6 (Signal 15:45 statt Schluss) ist nicht enthalten: '
           'Erwartung IBS ≈ −0,4, IBS-Land ≈ −0,6 Punkte p.a. (README).',
           '- Keine Leihkosten, keine Zinsen (wie K3).']
