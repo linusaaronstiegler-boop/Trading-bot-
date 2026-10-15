@@ -1,0 +1,20 @@
+name: tests
+on:
+  push:
+    paths: ['**.py', 'tests/**', 'requirements-replay.txt', '.github/workflows/tests.yml']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-replay.txt
+      - name: pytest (ohne Netz; Replay-Tests werden ohne Yahoo-Cache übersprungen)
+        run: python -m pytest -q

@@ -6,15 +6,22 @@ on:
     - cron: '28 20 * * 1-5'   # 15:28 New York bei US-Winterzeit (EST); der jeweils falsche Lauf beendet sich sofort ("kein Fenster")
     - cron: '40 19 * * 1-5'   # Nachläufer 15:40 EDT, falls der erste Lauf verzögert/ausgefallen ist (`letzter_lauf` verhindert Doppelhandel)
     - cron: '40 20 * * 1-5'   # Nachläufer 15:40 EST
-    - cron: '28 17 27 11 *'   # Halbtag 27.11.2026 (Schluss 13:00 ET = MW-Kauftag!) – 12:28 ET
-    - cron: '28 17 24 12 *'   # Halbtag 24.12.2026 – 12:28 ET
+    # Halbtage (Schluss 13:00 ET) für jedes Jahr: Tag nach Thanksgiving und Heiligabend (EST), 3. Juli (EDT).
+    # An normalen Tagen endet dieser Lauf sofort mit "kein Fenster" (keine Datei geändert, kein Commit).
+    - cron: '28 17 * 11,12 1-5'   # 12:28 ET (EST)
+    - cron: '40 17 * 11,12 1-5'   # Nachläufer 12:40 ET
+    - cron: '28 16 3 7 *'         # 12:28 ET (EDT), 3. Juli
+    - cron: '40 16 3 7 *'
   workflow_dispatch:
     inputs:
       modus:
-        description: 'dry = nur rechnen (auch außerhalb des Fensters), live = handeln'
+        description: 'dry = nur rechnen (auch außerhalb des Fensters), live = handeln (nur im Fenster 10–30 Min vor Schluss)'
         default: 'dry'
+        type: choice
+        options: [dry, live]
 permissions:
   contents: write
+  issues: write
 concurrency:
   group: systembuch-bot
   cancel-in-progress: false
@@ -43,7 +50,33 @@ jobs:
           git config user.name "systembuch-bot"
           git config user.email "bot@users.noreply.github.com"
           for f in state.json journal.csv equity.csv STATUS.md STATUS-dry.md log.txt; do [ -f "$f" ] && git add -f -- "$f"; done
+          [ -d berichte ] && git add -f -- berichte
           if ! git diff --cached --quiet; then
             git commit -m "Lauf $(date -u +%F)"
             for i in 1 2 3; do git pull --rebase origin main && git push && break || sleep 10; done
           fi
+      - name: Zustand als Artifact (Review 5.6)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zustand-${{ github.run_id }}
+          path: |
+            state.json
+            journal.csv
+            equity.csv
+            STATUS.md
+            STATUS-dry.md
+            log.txt
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Alarm als GitHub-Issue (roter Lauf)
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Lauf: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo
+            [ -f STATUS.md ] && head -c 5000 STATUS.md
+          } > alarm.md
+          gh issue create --repo "${{ github.repository }}" --title "Systembuch-Bot: roter Lauf $(date -u +%F)" --body-file alarm.md

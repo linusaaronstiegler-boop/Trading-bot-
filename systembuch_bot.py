@@ -51,18 +51,20 @@ ZUSTAND_NEU = dict(version=2, start=None, startkapital=None, hwm=None, legs=[], 
 class Abbruch(Exception):
     """Kontrollierter Abbruch: Titel oben in STATUS.md, Exit-Code 1 (GitHub zeigt den Lauf rot)."""
 
-    def __init__(self, titel, text):
-        super().__init__(f'{titel}: {text}'); self.titel = titel; self.text = text
+    def __init__(self, titel, text, status_steht=False):
+        super().__init__(f'{titel}: {text}'); self.titel = titel; self.text = text; self.status_steht = status_steht
 
 
 AUSGABE = dict(schreiben=True, status='STATUS.md')   # Dry-Lauf: nichts außer STATUS-dry.md schreiben (Review 5.7/6.8)
-LOGZEILEN = []
+LOGZEILEN = []; WARNUNGEN = []
+VIX_ALARM_LAEUFE = 3         # Review §8: Alarm, wenn drei Läufe in Folge ohne VIX
 
 
 # ---------- Infrastruktur ----------
 def log(msg):
     line = f"{dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} {msg}"
     print(line); LOGZEILEN.append(line)
+    if msg.startswith('WARNUNG'): WARNUNGEN.append(msg[9:])
     if AUSGABE['schreiben']:
         with open('log.txt', 'a') as f: f.write(line + '\n')
 
@@ -137,15 +139,30 @@ def snapshot_zusammenfuehren(iex, sip):
     return out
 
 
-def yahoo_live(sym):
-    r = urllib.request.Request(f'https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(sym)}?range=1d&interval=5m', headers={'User-Agent': 'Mozilla/5.0'})
-    return json.load(urllib.request.urlopen(r, timeout=25))['chart']['result'][0]['meta']['regularMarketPrice']
+def yahoo_live(sym, host='query1'):
+    r = urllib.request.Request(f'https://{host}.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(sym)}?range=1d&interval=5m', headers={'User-Agent': 'Mozilla/5.0'})
+    return float(json.load(urllib.request.urlopen(r, timeout=20))['chart']['result'][0]['meta']['regularMarketPrice'])
+
+
+def cboe_live(sym):
+    """CBOE-Kursseite (15 Min verzögert): cdn.cboe.com/api/global/delayed_quotes/quotes/_VIX.json."""
+    r = urllib.request.Request(f'https://cdn.cboe.com/api/global/delayed_quotes/quotes/_{sym.lstrip("^")}.json', headers={'User-Agent': 'Mozilla/5.0'})
+    return float(json.load(urllib.request.urlopen(r, timeout=20))['data']['current_price'])
+
+
+VIX_QUELLEN = (('Yahoo query1', lambda s: yahoo_live(s, 'query1')), ('Yahoo query2', lambda s: yahoo_live(s, 'query2')),
+               ('CBOE (15 Min verzögert)', cboe_live))
 
 
 def lade_vix():
-    """→ (vix, vix3m, quelle) oder (None, None, Fehlertext)."""
-    try: return yahoo_live('^VIX'), yahoo_live('^VIX3M'), 'Yahoo query1'
-    except Exception as e: return None, None, f'fehlt ({str(e)[:60]})'
+    """VIX und VIX3M aus derselben Quelle (Review 4.5: GitHub-IPs bekommen von Yahoo oft 429). → (vix, vix3m, quelle) oder (None, None, Fehlertext)."""
+    fehler = []
+    for name, f in VIX_QUELLEN:
+        try:
+            v, v3 = f('^VIX'), f('^VIX3M')
+            if v > 0 and v3 > 0: return v, v3, name
+        except Exception as e: fehler.append(f'{name}: {str(e)[:40]}')
+    return None, None, 'fehlt (' + '; '.join(fehler) + ')'
 
 
 def lade_kalender(heute):
@@ -448,7 +465,7 @@ def senden(st, heute, kz, ausstiege, einstiege, orders, uhr, offene):
     for s in symbole:
         m = minuten_bis_schluss_jetzt(uhr)
         if not (ORDER_SPAETESTENS_MIN <= m <= ORDER_FRUEHESTENS_MIN):
-            fehler.append(f'{s}: nicht gesendet, {m:.1f} Min bis Schluss (erlaubt {ORDER_SPAETESTENS_MIN}–{ORDER_FRUEHESTENS_MIN})'); continue
+            fehler.append(f'ORDER NICHT GESENDET {s}: {m:.1f} Min bis Schluss (erlaubt {ORDER_SPAETESTENS_MIN}–{ORDER_FRUEHESTENS_MIN})'); continue
         aus_s = [a for a in ausstiege if a[0]['symbol'] == s]; ein_s = [l for l in einstiege if l['symbol'] == s]
         d = orders.get(s, 0); cid = f'sb-{heute}-{s}'
         komps = []
@@ -471,12 +488,12 @@ def senden(st, heute, kz, ausstiege, einstiege, orders, uhr, offene):
                     if leg['id'] not in aus_ids: gestoppt_neu.append(leg)
         if not ok:
             a['status'] = 'abgelehnt'; a['grund'] = 'offene Order im Symbol nicht stornierbar'; speichern(st)
-            fehler.append(f'{s}: offene Order nicht stornierbar – heute keine MOC'); continue
+            fehler.append(f'ORDER NICHT GESENDET {s}: offene Order nicht stornierbar – heute keine MOC'); continue
         try:
             o = moc_senden(s, d, cid); a.update(order_id=o['id'], status='gesendet')
             log(f"MOC {'buy' if d > 0 else 'sell'} {abs(d)} {s} → {o['id']} ({minuten_bis_schluss_jetzt(uhr):.1f} Min vor Schluss)")
         except Exception as e:
-            a.update(status='abgelehnt', grund=str(e)[:200]); fehler.append(f'{s} {d:+d}: {str(e)[:160]}'); log(f'Order {s} {d:+d} ABGELEHNT: {str(e)[:160]}')
+            a.update(status='abgelehnt', grund=str(e)[:200]); fehler.append(f'ORDER ABGELEHNT {s} {d:+d}: {str(e)[:160]}'); log(f'Order {s} {d:+d} ABGELEHNT: {str(e)[:160]}')
         speichern(st)
     for leg in gestoppt_neu:                                                             # Stops der bleibenden BB-Legs wieder setzen
         if leg in st['legs'] and leg.get('einstieg'): stop_setzen(leg)
@@ -503,11 +520,13 @@ def main(argv=None):
         return replay.main([*a.replay, *a.rest])
     if a.rest: raise SystemExit(f'unbekannte Optionen: {a.rest}')
     if a.force and not a.dry: raise SystemExit('--force nur zusammen mit --dry (Orders nur im Fenster 10–30 Min vor Schluss)')
-    AUSGABE.update(schreiben=not a.dry, status='STATUS-dry.md' if a.dry else 'STATUS.md'); LOGZEILEN.clear()
+    AUSGABE.update(schreiben=not a.dry, status='STATUS-dry.md' if a.dry else 'STATUS.md'); LOGZEILEN.clear(); WARNUNGEN.clear()
     try:
         return lauf(a)
     except Abbruch as e:
-        log(f'{e.titel}: {e.text}'); status_fehler(e.titel, e.text); sys.exit(1)
+        log(f'{e.titel}: {e.text}')
+        if not e.status_steht: status_fehler(e.titel, e.text)
+        sys.exit(1)
     except Exception as e:
         import traceback
         log(f'FEHLER: {type(e).__name__}: {str(e)[:300]}'); print(traceback.format_exc()[-2000:])
@@ -539,6 +558,8 @@ def lauf(a):
     konto = alp('/v2/account'); positionen = positionen_lesen()
     csv_anhaengen('journal.csv', JOURNAL_SPALTEN, zeilen)
     reihe = equity_nachtragen(st, konto, positionen, kal, heute)
+    k5 = kern.abschaltkriterium(reihe)                                               # K5 aus der eigenen Kontokurve seit Start
+    if k5['verletzt']: log('ABSCHALTKRITERIUM verletzt: ' + '; '.join(k5['verletzt']))
     differenz = abgleich(st['legs'], positionen)
     if differenz:
         text = 'Legs ≠ Alpaca-Positionen: ' + ', '.join(f'{s} Legs {a_} / Alpaca {b_}' for s, (a_, b_) in differenz.items())
@@ -567,8 +588,8 @@ def lauf(a):
     live = snapshots(list(ALLE_SYMBOLE))
     vix, vix3m, vix_quelle = lade_vix()
     kurse = dict(live)
-    if vix and vix3m: kurse['^VIX'] = {'px': vix}; kurse['^VIX3M'] = {'px': vix3m}
-    else: log(f'VIX nicht lesbar: {vix_quelle}')
+    if vix and vix3m: kurse['^VIX'] = {'px': vix}; kurse['^VIX3M'] = {'px': vix3m}; st['vix_fehlt'] = 0
+    else: st['vix_fehlt'] = st.get('vix_fehlt', 0) + 1; log(f'WARNUNG: VIX nicht lesbar ({st["vix_fehlt"]}. Lauf in Folge): {vix_quelle}')
     if a.aufzeichnen: aufzeichnen(a.aufzeichnen, heute, clock, eq, st, hist, live, vix, vix3m, leihbar)
     kz = kennzahlen(hist, live)
     for leg in st['legs']:
@@ -581,10 +602,13 @@ def lauf(a):
     log(f'Lauf {heute} {entscheidung_zeit} ET – Equity {eq:,.0f} $, Höchststand {st["hwm"]:,.0f}, Drawdown {dd:.1%}, Größenfaktor {info["faktor"]}')
     log(f'Signale: MW-Kauf {info["mw_kauf"]}, MW-Verkauf {info["mw_verkauf"]}, TSMOM {info["tsmom_tag"]}, VIX3M/VIX {ratio and round(ratio, 3)} ({vix_quelle})')
 
-    # Not-Aus: alles per MOC glatt (Regel 4: nur MOC im Fenster, kein DELETE /v2/positions mehr)
-    if kern.notaus(eq, st['startkapital']):
-        log(f'NOT-AUS: Equity {eq:,.0f} < 70 % von {st["startkapital"]:,.0f} – alle Legs per MOC glatt, Bot stoppt')
-        schliessen = [(l, 'NOT-AUS') for l in st['legs']]; neu = []; st.update(gestoppt=True, stopp_grund='Not-Aus')
+    # Not-Aus und Abschaltkriterium K5: alles per MOC glatt (Regel 4: nur MOC im Fenster, kein DELETE /v2/positions), Bot stoppt
+    stopp = None
+    if kern.notaus(eq, st['startkapital']): stopp = f'NOT-AUS: Equity {eq:,.0f} $ < 70 % des Startkapitals {st["startkapital"]:,.0f} $'
+    elif k5['verletzt']: stopp = 'ABSCHALTKRITERIUM AUSGELÖST: ' + '; '.join(k5['verletzt'])
+    if stopp:
+        log(f'{stopp} – alle Legs per MOC glatt, Bot stoppt, kein automatischer Neustart')
+        schliessen = [(l, stopp.split(':')[0]) for l in st['legs']]; neu = []; st.update(gestoppt=True, stopp_grund=stopp, aufgeschoben=[])
     roh = netto_plan(schliessen, neu)
     no = netto_orders(st['legs'], schliessen, neu)                                     # Review 3.2: nie durch null in einem Tag
     plan = no['orders']
@@ -598,7 +622,7 @@ def lauf(a):
                     ausstiege=no['ausstiege'], einstiege=no['einstiege'], info=info, fehler=[])
     lauf_info = dict(entscheidung=entscheidung_zeit, min_entscheidung=minuten_bis_schluss_jetzt(uhr), vix_quelle=vix_quelle, kalender=kal.quelle)
     if a.dry:
-        status_md(st, eq, dd, kz, ratio, plan, no['ausstiege'], no['einstiege'], heute, kal, lauf_info, dry=True); return ergebnis
+        status_md(st, eq, dd, kz, ratio, plan, no['ausstiege'], no['einstiege'], heute, kal, lauf_info, k5, dry=True, titel=stopp); return ergebnis
 
     # 4) Senden (Uhr erneut lesen: Alpaca lehnt MOC nach 15:50 ET ab – lieber kein Handel als abgelehnte Orders)
     clock2 = alp('/v2/clock'); uhr = dict(jetzt=zeit(clock2['timestamp']), schluss=naechster_schluss, mono=time.monotonic())
@@ -608,15 +632,20 @@ def lauf(a):
     for l in st['legs']:
         if l.get('id') in info['datum_neu']: l['datum'] = info['datum_neu'][l['id']]       # Folgesignal: halten, Tag neu zählen
     st['letzter_lauf'] = heute                                                           # vor der ersten Order: Nachläufer handelt nicht doppelt
-    st['aufgeschoben'] = no['aufgeschoben']
+    if not stopp: st['aufgeschoben'] = no['aufgeschoben']
     if info['tsmom_tag']: st['letzte_tsmom'] = heute
     st['signale'][heute] = {s: round(kz[s]['ibs'], 4) for s in INDEX + SEKTOREN + LAENDER if s in kz}
     lauf_info['min_senden'] = rest
     fehler = senden(st, heute, kz, no['ausstiege'], no['einstiege'], plan, uhr, offene)
-    st['letzter_lauf_info'] = lauf_info; speichern(st)
+    st['letzter_lauf_info'] = lauf_info
+    if st.get('vix_fehlt', 0) >= VIX_ALARM_LAEUFE: fehler.append(f"VIX seit {st['vix_fehlt']} Läufen nicht lesbar – VIX-Contango kann weder ein- noch aussteigen")
+    if kal.ist_handelstag(heute) and (kal.naechster(heute) or '9') > heute and woche(kal.naechster(heute) or '2999-12-31') != woche(heute):
+        wochenbericht(st, heute, eq, kal)                                                # letzter Handelstag der Woche (meist Freitag)
+    speichern(st)
     ergebnis['fehler'] = fehler
-    status_md(st, eq, dd, kz, ratio, plan, no['ausstiege'], [], heute, kal, lauf_info, fehler=fehler)
-    if fehler: raise Abbruch('ORDER ABGELEHNT', '; '.join(fehler))
+    status_md(st, eq, dd, kz, ratio, plan, no['ausstiege'], [], heute, kal, lauf_info, k5, fehler=fehler, titel=stopp)
+    if stopp: raise Abbruch(stopp.split(':')[0], stopp, status_steht=True)
+    if fehler: raise Abbruch('ORDER ABGELEHNT' if any('VIX' not in f for f in fehler) else 'VIX FEHLT', '; '.join(fehler), status_steht=True)
     return ergebnis
 
 
@@ -643,24 +672,119 @@ def status_gestoppt(st):
     status_schreiben([f"# GESTOPPT – {st.get('stopp_grund')}", '', 'Kein Handel. Wieder einschalten nur nach Sitzung mit Linus: in state.json `gestoppt` auf false.'])
 
 
-def status_md(st, eq, dd, kz, ratio, plan, ausstiege, neu, heute, kal, lauf_info, dry=False, fehler=()):
-    z = [f"# Systembuch-Bot – Stand {heute} {'(DRY RUN)' if dry else ''}", '']
-    if fehler: z += ['**ORDER ABGELEHNT:** ' + '; '.join(fehler), '']
-    z += [f"Equity **{eq:,.0f} $** · Start {st.get('startkapital') or eq:,.0f} $ · Höchststand {st.get('hwm') or eq:,.0f} $ · Drawdown {dd:.1%}{' · BREMSE' if dd >= BREMSE_DD else ''}",
-          f"Entscheidung {lauf_info.get('entscheidung')} ET · Senden {lauf_info.get('min_senden', 0):.1f} Min vor Schluss · VIX3M/VIX {ratio and round(ratio, 3)} ({lauf_info.get('vix_quelle')}) · Kalender {lauf_info.get('kalender')}",
-          f"Netto-Orders heute: {plan or 'keine'}", '',
-          '| Leg | Strategie | Symbol | Richtung | Stück | Einstieg | seit | Stop | Status |', '|---|---|---|---|---|---|---|---|---|']
+def sparkline(werte):
+    zeichen = '▁▂▃▄▅▆▇█'
+    if not werte: return ''
+    lo, hi = min(werte), max(werte)
+    return ''.join(zeichen[int((v - lo) / (hi - lo) * 7)] if hi > lo else zeichen[3] for v in werte)
+
+
+def woche(datum):
+    j, w, _ = dt.date.fromisoformat(datum).isocalendar()
+    return f'{j}-{w:02d}'
+
+
+def _f(x, fmt='{:,.0f}'):
+    try: return fmt.format(float(x)).replace(',', '.') if x not in (None, '') else '–'
+    except (TypeError, ValueError): return '–'
+
+
+def statistik(zeilen, schluessel='rendite_bp'):
+    """Ø, t-Wert und n einer Spalte (bp) aus Journalzeilen."""
+    x = [float(z[schluessel]) for z in zeilen if z.get(schluessel) not in (None, '')]
+    n = len(x)
+    if n == 0: return dict(n=0, mittel=None, t=None)
+    mu = sum(x) / n; sd = (sum((v - mu) ** 2 for v in x) / (n - 1)) ** 0.5 if n > 1 else 0.0
+    return dict(n=n, mittel=mu, t=mu / (sd / n ** 0.5) if sd > 0 else None)
+
+
+def status_md(st, eq, dd, kz, ratio, plan, ausstiege, neu, heute, kal, lauf_info, k5=None, dry=False, fehler=(), titel=None):
+    """STATUS.md (SPEC Aufgabe 5): Alarme oben, Konto, Lauf, Kurve, K5, offene Legs, Stand je Strategie, IBS-Vorteil, Termine, Log."""
+    k5 = k5 or {}
+    z = [f"# Systembuch-Bot – Stand {heute}{' (DRY RUN – nichts gesendet, nichts gebucht)' if dry else ''}", '']
+    if titel: z += [f'## {titel}', '', 'Alle Positionen per MOC glatt, Bot gestoppt. Neustart nur nach Sitzung mit Linus (`gestoppt` in state.json).', '']
+    if fehler: z += ['## FEHLER – Lauf rot (Exit 1)', '', *[f'- {x}' for x in fehler], '']
+    if WARNUNGEN: z += ['**Warnungen:** ' + ' · '.join(dict.fromkeys(WARNUNGEN)), '']
+    z += ['## Konto', '',
+          f"Equity **{_f(eq)} $** · Start {_f(st.get('startkapital') or eq)} $ ({st.get('start') or heute}) · Höchststand {_f(st.get('hwm') or eq)} $ · "
+          f"Drawdown {dd * 100:.1f} %".replace(".", ",") + f"{' · **BREMSE ×0,5**' if dd >= BREMSE_DD else ''}",
+          f"Entscheidung {lauf_info.get('entscheidung')} ET · gesendet {lauf_info['min_senden']:.1f} Min vor Schluss" if 'min_senden' in lauf_info else
+          f"Entscheidung {lauf_info.get('entscheidung')} ET ({lauf_info.get('min_entscheidung', 0):.1f} Min vor Schluss)",
+          f"VIX3M/VIX {ratio and round(ratio, 3)} (Quelle: {lauf_info.get('vix_quelle')}) · Kalender: {lauf_info.get('kalender')}",
+          f"Netto-MOC-Orders heute: {plan or 'keine'}", '']
+    eqz = csv_lesen('equity.csv')[-60:]
+    if eqz:
+        w = [float(r['equity']) for r in eqz]
+        z += ['## Kurve (letzte 60 Handelstage)', '', f"`{sparkline(w)}`  {eqz[0]['datum']} {_f(w[0])} $ → {eqz[-1]['datum']} {_f(w[-1])} $ (min {_f(min(w))}, max {_f(max(w))})", '']
+    def k5zeile(name, wert, schwelle, ab, fmt):
+        return f"| {name} | {fmt(wert) if wert is not None else f'ab Tag {ab}'} | {schwelle} | {'**VERLETZT**' if any(name.split()[0] in v for v in k5.get('verletzt', [])) else 'ok'} |"
+    z += ['## Abschaltkriterium K5', '', f"Tage seit Start: {k5.get('tage', 0)}", '', '| Kennzahl | Wert | Schwelle | Status |', '|---|---|---|---|',
+          k5zeile('12-Monats-Rendite', k5.get('rendite_12m'), '≤ −24 %', 252, lambda x: f'{x * 100:+.1f} %'),
+          k5zeile('Drawdown vom Höchststand', k5.get('drawdown'), '≥ 34 %', 1, lambda x: f'{x * 100:.1f} %'),
+          k5zeile('250-Tage-Sharpe', k5.get('sharpe_250'), '≤ −1,30', 250, lambda x: f'{x:.2f}'), '']
+    z += ['## Offene Legs', '', '| Leg | Strategie | Symbol | Richtung | Stück | Einstieg | Kurs | unreal. $ | unreal. bp | seit | Stop | Status |', '|---|---|---|---|---|---|---|---|---|---|---|---|']
+    summe = 0.0
     for l in st['legs']:
-        z.append(f"| {l['id']} | {l['strategie']} | {l['symbol']} | {'long' if l['richtung'] > 0 else 'short'} | {l['stueck']} | {l.get('einstieg') or 'MOC offen'} | {l['datum']} | {l.get('stop', '')} | {'Ausstieg MOC heute' if l.get('ausstieg') else l.get('status', '')} |")
-    for l in neu: z.append(f"| neu | {l['strategie']} | {l['symbol']} | {'long' if l['richtung'] > 0 else 'short'} | {l['stueck']} | MOC heute | {l['datum']} | | geplant |")
-    z += ['', '## Signale heute', '| ETF | Kurs | IBS | SMA200 | BB unten | Signal |', '|---|---|---|---|---|---|']
+        px = kz.get(l['symbol'], {}).get('px'); ein = l.get('einstieg')
+        u = (px - ein) * l['stueck'] * l['richtung'] if px and ein else None; summe += u or 0
+        ub = l['richtung'] * (px / ein - 1) * 1e4 if px and ein else None
+        status = 'Ausstieg MOC heute' if l.get('ausstieg') else ('Ausstieg offen (nachholen)' if l.get('ausstieg_offen') else l.get('status', ''))
+        z.append(f"| {l['id']} | {l['strategie']} | {l['symbol']} | {'long' if l['richtung'] > 0 else 'short'} | {l['stueck']} | {ein or 'MOC offen'} | "
+                 f"{px or '–'} | {_f(u)} | {_f(ub, '{:+.0f}')} | {l.get('einstieg_datum') or l['datum']} | {l.get('stop', '')} | {status} |")
+    for l in neu: z.append(f"| neu | {l['strategie']} | {l['symbol']} | {'long' if l['richtung'] > 0 else 'short'} | {l['stueck']} | MOC heute | – | – | – | {l['datum']} | | geplant |")
+    z += ['', f'Unrealisiert gesamt: {_f(summe)} $', '']
+    j = csv_lesen('journal.csv')
+    z += ['## Stand je Strategie seit Start (journal.csv)', '', '| Strategie | Trades | Treffer | Ø R (bp je Trade) | t | Summe $ | Ø MOC-Abweichung bp |', '|---|---|---|---|---|---|---|']
+    for strat in kern.VORRANG:
+        x = [r for r in j if r['strategie'] == strat]
+        s_ = statistik(x); a_ = statistik(x, 'abweichung_bp')
+        tr = sum(1 for r in x if r.get('pnl') not in ('', None) and float(r['pnl']) > 0) / len(x) if x else None
+        z.append(f"| {strat} | {len(x)} | {_f(tr, '{:.0%}')} | {_f(s_['mittel'], '{:+.1f}')} | {_f(s_['t'], '{:.1f}')} | "
+                 f"{_f(sum(float(r['pnl']) for r in x if r.get('pnl') not in ('', None)))} | {_f(a_['mittel'], '{:+.1f}')} |")
+    z += ['', 'R = Rendite je Trade nach Fill (Gebühren 0). MOC-Abweichung = Kosten der Fills gegenüber dem offiziellen Schluss (Kostenabschlag gegenüber dem Replay).', '',
+          '## Vorteil auf Trade-Ebene (IBS-Familie)', '', '| Gruppe | Trades | Ø bp je Haltetag | t | Referenz K3 | Referenz K6 (15:45) | Signal gekippt | Signal verpasst |', '|---|---|---|---|---|---|---|---|']
+    ref = dict(IBS=('+16 bp', '+12,7 bp'), IBS_SEKTOR=('–', '–'), IBS_LAND=('+13 bp', '+6,9 bp'))
+    for g in IBS_FAMILIE:
+        x = [dict(r, bp_tag=float(r['rendite_bp']) / max(1, int(r['haltetage'] or 1))) for r in j if r['strategie'] == g and r.get('rendite_bp') not in ('', None)]
+        s_ = statistik(x, 'bp_tag'); n, gek, verp = st.get('signal_stat', {}).get(g, [0, 0, 0])
+        z.append(f"| {g} | {s_['n']} | {_f(s_['mittel'], '{:+.1f}')} | {_f(s_['t'], '{:.1f}')} | {ref[g][0]} | {ref[g][1]} | "
+                 f"{f'{gek / n:.0%} von {n}' if n else '–'} | {verp} |")
+    z += ['', 'Gekippt = Signal um 15:45, aber nicht mehr in der fertigen Tageskerze (K6-Referenz: 26 %). Verpasst = erst nach 15:45 entstanden.', '',
+          '## Nächste Termine', '']
+    z += [f'- {d} {dt.date.fromisoformat(d).strftime("%a")}: {t}' for d, t in kal.kommende_termine(heute, 35)] or ['- keine']
+    z += ['', '## Signale heute', '', '| ETF | Kurs | IBS | SMA200 | BB unten | Signal |', '|---|---|---|---|---|---|']
     for s in INDEX + SEKTOREN + LAENDER:
         k = kz.get(s)
         if not k: continue
-        sig = ('IBS ' if k['ibs'] < 0.2 else '') + ('BB ' if kern.ist_bb_signal(k) else '')
+        sig = ('IBS ' if k['ibs'] < IBS_SCHWELLE else '') + ('BB ' if kern.ist_bb_signal(k) else '')
         z.append(f"| {s} | {k['px']:.2f} | {k['ibs']:.2f} | {k['sma200'] and round(k['sma200'], 2)} | {k['bb_unten']:.2f} | {sig} |")
-    z += ['', f"Ausstiege: {[(l['strategie'], l['symbol'], g) for l, g, *_ in ausstiege] or 'keine'}", '', '*Regeln und Belege: README.md. Journal: journal.csv. Log: log.txt.*']
+    z += ['', f"Ausstiege heute: {[(l['strategie'], l['symbol'], g) for l, g, *_ in ausstiege] or 'keine'}", '',
+          '## Letzte Logzeilen', '', '```', *LOGZEILEN[-5:], '```', '', '*Regeln und Belege: README.md. Journal: journal.csv. Kurve: equity.csv. Log: log.txt.*']
     status_schreiben(z)
+
+
+def wochenbericht(st, heute, eq, kal):
+    """berichte/JJJJ-WW.md am letzten Handelstag der Woche (SPEC Aufgabe 5): Abschlüsse seit dem letzten Bericht, Kurve, offene Legs."""
+    if not AUSGABE['schreiben']: return
+    os.makedirs('berichte', exist_ok=True)
+    j = csv_lesen('journal.csv'); ab = st.get('bericht_journal', 0); neu = j[ab:]
+    e = [r for r in csv_lesen('equity.csv') if woche(r['datum']) == woche(heute)]
+    vorwoche = [r for r in csv_lesen('equity.csv') if woche(r['datum']) < woche(heute)]
+    basis = float(vorwoche[-1]['equity']) if vorwoche else (st.get('startkapital') or eq)
+    z = [f'# Wochenbericht {woche(heute)} (Stand {heute}, 15:45 ET)', '',
+         f'Equity {_f(eq)} $ · Woche {(eq / basis - 1) * 100:+.2f} % (gegen Schluss Vorwoche {_f(basis)} $) · Höchststand {_f(st.get("hwm"))} $', '',
+         '| Tag | Equity (Schluss) | Brutto | Legs |', '|---|---|---|---|']
+    z += [f"| {r['datum']} | {_f(r['equity'])} | {_f(r.get('brutto'))} | {r.get('legs') or '–'} |" for r in e]
+    z += ['', f'## Abschlüsse seit dem letzten Bericht ({len(neu)})', '', '| Strategie | Trades | Treffer | Ø bp | Summe $ |', '|---|---|---|---|---|']
+    for strat in kern.VORRANG:
+        x = [r for r in neu if r['strategie'] == strat]
+        if not x: continue
+        pn = [float(r['pnl']) for r in x if r.get('pnl') not in ('', None)]
+        z.append(f"| {strat} | {len(x)} | {sum(1 for p in pn if p > 0) / len(pn):.0%} | {_f(statistik(x)['mittel'], '{:+.1f}')} | {_f(sum(pn))} |" if pn else f'| {strat} | {len(x)} | – | – | – |')
+    z += ['', f"Offene Legs: {len(st['legs'])}. Ausstiege zum heutigen Schluss erscheinen im nächsten Bericht (Abrechnung im Folgelauf).", '']
+    with open(os.path.join('berichte', f'{woche(heute)}.md'), 'w') as f: f.write('\n'.join(z))
+    st['bericht_journal'] = len(j)
+    log(f'Wochenbericht berichte/{woche(heute)}.md geschrieben')
 
 
 if __name__ == '__main__':
