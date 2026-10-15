@@ -42,8 +42,7 @@ jobs:
         run: |
           git config user.name "systembuch-bot"
           git config user.email "bot@users.noreply.github.com"
-          [ -f journal.csv ] || echo "id,strategie,symbol,richtung,stueck,einstieg,einstieg_datum,ausstieg,ausstieg_datum,pnl,grund" > journal.csv
-          for f in state.json journal.csv STATUS.md log.txt; do [ -f "$f" ] && git add -f -- "$f"; done
+          for f in state.json journal.csv equity.csv STATUS.md STATUS-dry.md log.txt; do [ -f "$f" ] && git add -f -- "$f"; done
           if ! git diff --cached --quiet; then
             git commit -m "Lauf $(date -u +%F)"
             for i in 1 2 3; do git pull --rebase origin main && git push && break || sleep 10; done
