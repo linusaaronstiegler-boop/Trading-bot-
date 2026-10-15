@@ -24,7 +24,7 @@ Repo `linusaaronstiegler-boop/Trading-bot-` (= `systembuch-bot`), Branch **`clau
 | 7 Echtgeld | `ucits.md`: Gegenstücke mit ISIN/Xetra/TER/Spread, Brokerkosten inkl. Traders Place, Break-even-Rechnung, C40-Ergebnis | 4516f79 |
 | Review v2 | 1 Befund hoch, 5 mittel, 6 niedrig behoben (siehe unten) | c800706, ecc4c99 |
 | Paper | Live-Trockenlauf, Alpaca-Fixture, `assets.json`, Prüfungen 1 und 3 | 1647d41 |
-| v1-Stand 23:15 | Neue `SPEC-v2.md`, `REVIEW-v1.md`, v1-Referenz im Test ersetzt. Die drei v1-Fixes (Karfreitag 2027, Abgleich nur `us_equity` mit Exit 1 bzw. nur Meldung im dry, abgelehnte Order = Symbol unverändert + Exit 1) in v2 übernommen und **gegen v1 auf denselben Fixtures getestet** (`tests/test_v1_fixes.py`); v1 = v2 weiter auf allen 6 Tagen | NEU_COMMIT |
+| v1-Stand 23:15 | Neue `SPEC-v2.md`, `REVIEW-v1.md`, v1-Referenz im Test ersetzt. Die drei v1-Fixes (Karfreitag 2027, Abgleich nur `us_equity` mit Exit 1 bzw. nur Meldung im dry, abgelehnte Order = Symbol unverändert + Exit 1) in v2 übernommen und **gegen v1 auf denselben Fixtures getestet** (`tests/test_v1_fixes.py`); v1 = v2 weiter auf allen 6 Tagen | 0a2a167 |
 
 `bot.yaml` aus dem letzten Upload ist gleich dem ursprünglichen; `.github/workflows/bot.yml` bleibt die weiterentwickelte Fassung (Halbtage, dry/live-Auswahl, Artifact, Issue-Alarm).
 
