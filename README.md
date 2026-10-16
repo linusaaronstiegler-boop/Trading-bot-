@@ -2,7 +2,7 @@
 
 Handelt **nur die belegten Regeln** von Linus' Trading-Projekt auf einem Alpaca-Paper-Konto – reines Python, kein LLM, keine Rechenkosten. Ein Lauf pro US-Handelstag: Start 15:28 New York (Cron), **Entscheidung 15:45 New York** (21:45 MESZ / MEZ; 26.–30.10. 20:45 MEZ), alle Orders Market-on-Close vor dem Annahmeschluss 15:50.
 
-> **Stand 15.10.2026 – v2 gebaut (SPEC-v2 Aufgaben 1–7 inkl. aller Review-Befunde aus `REVIEW-v1.md`), noch nicht scharf.** Offen vor dem ersten Live-Lauf: Alpaca-Schlüssel als GitHub-Secrets, die Paper-Prüfungen (`werkzeuge/paper_pruefungen.py`), ein grüner `dry`-Lauf per Actions. Was gebaut wurde und die genauen Klicks stehen in `ABSCHLUSS.md`. v1 (Stand 23:15) war ein Trockenlauf-Stand: Netto-Orders wurden dem ersten Leg 1:1 zugeordnet, es gab kein Nachholen, der IEX-Feed für Hoch/Tief verzerrte, State wurde nicht atomar geschrieben – alles in v2 behoben. Die fünf schon in v1 behobenen Befunde (Commit-Schritt, Lauffenster/MOC-Annahmeschluss, Karfreitag 2027, Positionsabgleich zu Laufbeginn, abgelehnte Orders nicht buchen) sind in v2 übernommen und gegen v1 getestet (`tests/test_v1_fixes.py`).
+> **Stand 15.10.2026 – v2 gebaut (SPEC-v2 Aufgaben 1–7 inkl. aller Review-Befunde aus `REVIEW-v1.md`), noch nicht scharf.** Paper-Prüfungen am 16.10. erledigt (Sperre in beide Richtungen bestätigt, `pruefungen-ergebnis.md`). Offen vor dem ersten Live-Lauf: Alpaca-Schlüssel als GitHub-Secrets, ein grüner `dry`-Lauf per Actions. Was gebaut wurde und die genauen Klicks stehen in `ABSCHLUSS.md`. v1 (Stand 23:15) war ein Trockenlauf-Stand: Netto-Orders wurden dem ersten Leg 1:1 zugeordnet, es gab kein Nachholen, der IEX-Feed für Hoch/Tief verzerrte, State wurde nicht atomar geschrieben – alles in v2 behoben. Die fünf schon in v1 behobenen Befunde (Commit-Schritt, Lauffenster/MOC-Annahmeschluss, Karfreitag 2027, Positionsabgleich zu Laufbeginn, abgelehnte Orders nicht buchen) sind in v2 übernommen und gegen v1 getestet (`tests/test_v1_fixes.py`).
 
 | Strategie | Markt | Regel | Größe | Beleg |
 |---|---|---|---|---|
@@ -43,7 +43,7 @@ Ehrlich: Das Kriterium ist ein Katastrophenschutz, kein Vorteilsmesser. Es erken
 2. **GitHub:** Repo ohne Branch-Schutz, Workflow auf `main` (Schedules laufen nur auf dem Standard-Branch).
 3. **Secrets:** Repo → Settings → Secrets and variables → Actions → `APCA_API_KEY_ID` und `APCA_API_SECRET_KEY` eintragen. Die Schlüssel stehen sonst nirgends.
 4. **Actions erlauben:** Settings → Actions → General → „Read and write permissions“ (damit der Bot `state.json`, `journal.csv`, `equity.csv`, `STATUS.md` zurückschreiben und bei rotem Lauf ein Issue anlegen kann).
-5. **Paper-Prüfungen** (einmal, vor dem ersten Live-Lauf, lokal mit den Schlüsseln): `python3 werkzeuge/paper_pruefungen.py --lesen` (jederzeit; friert `assets.json` ein) und an einem Handelstag zwischen 15:30 und 15:49 ET `--orders`. Ergebnis in `pruefungen-ergebnis.md`.
+5. **Paper-Prüfungen** (einmal, vor dem ersten Live-Lauf, lokal mit den Schlüsseln): `python3 werkzeuge/paper_pruefungen.py --lesen` (jederzeit; friert `assets.json` ein) und an einem Handelstag zwischen 15:30 und 15:49 ET `--orders`. Ergebnis in `pruefungen-ergebnis.md` (Stand 16.10.2026: alle erledigt).
 6. **Probelauf:** Actions → systembuch-bot → *Run workflow* → modus `dry`. Danach `STATUS-dry.md` lesen: Signale, geplante Orders, VIX-Quelle. Nichts gesendet, nichts gebucht.
 7. Ab dann läuft er von selbst Mo–Fr.
 

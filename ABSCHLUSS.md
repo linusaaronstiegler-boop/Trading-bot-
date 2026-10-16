@@ -7,7 +7,8 @@ Repo `linusaaronstiegler-boop/Trading-bot-` (= `systembuch-bot`), Branch **`clau
 - **v2 ist gebaut.** SPEC-v2 Aufgaben 1–7 sind erledigt, alle Befunde aus `REVIEW-v1.md` eingearbeitet, dazu ein zweiter feindseliger Review der v2. Die Regeln sind unverändert, es gibt kein LLM, der Live-Pfad braucht nur die Standardbibliothek.
 - **Live-Trockenlauf gegen dein Paper-Konto bestanden** (15.10., 17:34 ET, mit dem Endstand noch einmal 18:39 ET): Alpaca-Daten, Kalender, Leihbarkeit und VIX sind lesbar, es wurde nichts gesendet und nur `STATUS-dry.md` geschrieben.
 - **Replay trifft K3 genau**, wenn er wie K3 rechnet: +12,0 % p.a., Sharpe 0,75, Maximalverlust 24,1 %. **So, wie der Bot bei Alpaca handeln kann: +10,2 % p.a., Sharpe 0,68, Maximalverlust 26,7 %.** Das ist kein Fehler, sondern der Preis der Vorzeichenwechsel-Sperre (siehe Abschnitt Replay).
-- **Offen:** Paper-Prüfungen 2, 4 und 6 (Termin Fr 16.10. 21:33 MESZ in dieser Sitzung gesetzt) und 5 (braucht Actions), dein erster `dry`-Lauf in GitHub Actions und die Umstellung auf scharf.
+- **Paper-Prüfungen 2, 4, 6 erledigt** (Fr 16.10., 15:33 ET): Short per MOC geht, ein Vorzeichenwechsel in einer Order geht nicht, short → long mit zwei Kauforders auch nicht. Die Sperre in beide Richtungen bleibt also nötig, live gilt +10,2 % p.a. Das Konto ist wieder flach.
+- **Offen:** Prüfung 5 (braucht Actions), dein erster `dry`-Lauf in GitHub Actions und die Umstellung auf scharf.
 
 ## Was gebaut wurde
 
@@ -71,7 +72,7 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 
 ## Review-Befunde → Status
 
-**REVIEW-v1 (14 hoch):** 3.1 Netto-Order 1:1 ans Leg ✔ (FIFO, Abnahmetest IBS+MW SPY: eine Order 84, Legs 42/42) · 3.2 Vorzeichenwechsel ✔ (Sperre; Prüfung 4 bestätigt das Alpaca-Verhalten, sobald gelaufen) · 3.5 Ablehnung als ausgeführt gebucht ✔ · 5.2 Zustand nicht atomar ✔ · 5.4 kein Nachholen ✔ · 5.5 kein Abgleich ✔ · 1.8/1.9 GTC-Stop reserviert Stücke ✔ (Storno mit Warten, neu setzen) · 1.11/1.12/4.8 Kalender ✔ · 1.3/4.2 IEX ✔ (SIP; Prüfung 1 bestanden) · 2.5 Höchststand ✔ · 3.3/3.4/5.1/6.3 schon in v1 behoben · 1.12/5.5/3.5 zusätzlich in v1 (23:15) behoben, in v2 genauso umgesetzt und gegen v1 getestet. **Mittel:** 1.2 Signalabweichung gemessen ✔ · 2.2 ✔ (Entscheidung 6) · 2.3 Marge ✔ (Prüfung 3: Reg-T 200.000 $ bei 1,9 × 100.000 $) · 3.7 Teilfüllung ✔ · 4.4 fehlendes Symbol ✔ · 4.5 VIX ✔ (Ersatzquellen, Alarm nach 3 Läufen) · 5.3 Wiederholungen 5× ✔ · 5.6 Artifact ✔ · 6.7 Exit 1 + Issue ✔. **Niedrig:** 1.18 VORRANG ✔ · 2.7 Log < 1 Stück ✔ · 3.8 Stop storniert ✔ · 4.7 Leer-Commits ✔ · 5.7 Dry schreibt Journal ✔ · 5.9 tote Felder ✔ · 6.8 STATUS-dry ✔ · 1.7 BB am Ex-Tag: offen (nur an einem SPY-Ex-Tag prüfbar) · 1.16 Short per MOC: Prüfung 2.
+**REVIEW-v1 (14 hoch):** 3.1 Netto-Order 1:1 ans Leg ✔ (FIFO, Abnahmetest IBS+MW SPY: eine Order 84, Legs 42/42) · 3.2 Vorzeichenwechsel ✔ (Sperre in beide Richtungen; Prüfungen 4 und 6 haben das Alpaca-Verhalten am 16.10. bestätigt) · 3.5 Ablehnung als ausgeführt gebucht ✔ · 5.2 Zustand nicht atomar ✔ · 5.4 kein Nachholen ✔ · 5.5 kein Abgleich ✔ · 1.8/1.9 GTC-Stop reserviert Stücke ✔ (Storno mit Warten, neu setzen) · 1.11/1.12/4.8 Kalender ✔ · 1.3/4.2 IEX ✔ (SIP; Prüfung 1 bestanden) · 2.5 Höchststand ✔ · 3.3/3.4/5.1/6.3 schon in v1 behoben · 1.12/5.5/3.5 zusätzlich in v1 (23:15) behoben, in v2 genauso umgesetzt und gegen v1 getestet. **Mittel:** 1.2 Signalabweichung gemessen ✔ · 2.2 ✔ (Entscheidung 6) · 2.3 Marge ✔ (Prüfung 3: Reg-T 200.000 $ bei 1,9 × 100.000 $) · 3.7 Teilfüllung ✔ · 4.4 fehlendes Symbol ✔ · 4.5 VIX ✔ (Ersatzquellen, Alarm nach 3 Läufen) · 5.3 Wiederholungen 5× ✔ · 5.6 Artifact ✔ · 6.7 Exit 1 + Issue ✔. **Niedrig:** 1.18 VORRANG ✔ · 2.7 Log < 1 Stück ✔ · 3.8 Stop storniert ✔ · 4.7 Leer-Commits ✔ · 5.7 Dry schreibt Journal ✔ · 5.9 tote Felder ✔ · 6.8 STATUS-dry ✔ · 1.7 BB am Ex-Tag: offen (nur an einem SPY-Ex-Tag prüfbar) · 1.16 Short per MOC: Prüfung 2.
 
 **Review v2 (feindselig, 15.10. 23:00, mit Gegenprüfung):**
 - **Hoch:** Ein Nachläufer mit veraltetem Checkout hätte die MOC-Orders des ersten Laufs storniert und neu gesendet. ✔ Jetzt gilt: Gibt es heutige Bot-Orders bei Alpaca, die `state.json` nicht kennt, endet der Lauf ohne Änderung. Eigene MOC-Orders werden nie storniert, der Checkout holt den aktuellen Stand.
@@ -86,19 +87,18 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 | Nr. | Prüfung | Ergebnis |
 |---|---|---|
 | 1 | Snapshot `feed=delayed_sip` | **bestanden**: HTTP 200, Hoch/Tief aus SIP |
-| 2 | Short-MOC 1 IWM ohne Position | **offen**: nur 15:30–15:49 ET, die Schlüssel kamen am 15.10. erst nach Börsenschluss. **Termin gesetzt: Fr 16.10., 21:33 MESZ** (diese Sitzung führt 2, 4, 6 dann aus und trägt das Ergebnis hier ein) |
+| 2 | Short-MOC 1 IWM ohne Position | **bestanden** (16.10., 15:33 ET): angenommen (Status `new`). Leerverkauf per MOC funktioniert (Review 1.16) |
 | 3 | SVXY-Marge, Kaufkraft | **bestanden**: SVXY marginable, Wartungsmarge 30 %, nicht leihbar; Reg-T-Kaufkraft 200.000 $ (2×), Deckel des Bots 190.000 $ |
-| 4 | Long 1 SPY, Verkauf 2 SPY MOC | **offen**: Fenster |
+| 4 | Long 1 SPY, Verkauf 2 SPY MOC | **bestätigt Review 3.2**: Verkauf 2 abgelehnt, „insufficient qty available for order (requested: 2, available: 1)“. Long → short geht nicht in einer Order |
 | 5 | VIX im ersten Actions-`dry`-Lauf | **offen**: lokal kam der VIX von Yahoo query1. Auf GitHub-IPs zeigt es dein erster `dry`-Lauf in `STATUS-dry.md` („Quelle: …“) |
-| 6 | Short 1 IWM, dann 2 Kauf-MOC (neu) | **offen**: entscheidet, ob die Sperre auf der Kaufseite nötig ist (≈ 1,9 Punkte p.a.) |
+| 6 | Short 1 IWM, dann 2 Kauf-MOC (neu) | **negativ**: Eindecken angenommen, zweiter Kauf abgelehnt („insufficient qty available“, `held_for_orders` 1). Short → long geht auch mit zwei Orders nicht, **die Sperre auf der Kaufseite bleibt** (`VORZEICHENWECHSEL_SPERRE = 'beide'`). Die ≈ 1,9 Punkte p.a. sind nur über ein zweites Konto für TSMOM erreichbar (BEOBACHTUNGEN 1, Weg 2) |
 
-`assets.json` ist eingefroren: nicht leihbar sind EWG, USO und FXE, genau wie in K3 angenommen.
+`assets.json` ist eingefroren: nicht leihbar sind EWG, USO und FXE, genau wie in K3 angenommen. Aufgeräumt: Alle Test-Orders sind storniert oder glattgestellt, das Konto ist flach (Equity 100.000,05 $, keine offenen Orders). Rohausgabe: `pruefungen-ergebnis.md`.
 
 ## Offen
 
-- Paper-Prüfungen 2, 4, 6: Termin in dieser Sitzung gesetzt für Fr 16.10., 21:33 MESZ (mit deinen jetzigen Paper-Schlüsseln, Konto ist flach). Erzeugst du die Schlüssel vorher neu, bekommt der Termin 401 und meldet das, dann bitte selbst ausführen (Klick 5). Allgemein Mo–Fr zwischen 21:30 und 21:49 MESZ. Ab 26.10. (MEZ, USA noch Sommerzeit) eine Stunde früher, 20:30–20:49. Befehl unten. **Vor dem ersten Live-Lauf**, weil die Test-Orders sonst den Positionsabgleich stören.
 - Prüfung 5 und der grüne Actions-`dry`-Lauf brauchen die Secrets.
-- Entscheidung zur Sperre auf der Kaufseite: Wenn Prüfung 6 die zweite Kauforder annimmt, genügt in `systembuch_bot.py` die Zeile `VORZEICHENWECHSEL_SPERRE = 'verkauf'`. Zwei Kauforders sind gebaut und getestet (Dauertest 2022 auf den Cent gleich dem Replay, Ablehnung der zweiten Order sauber abgefangen). TSMOM unter Live-Bedingungen: Sitzung mit dir, vorab festgeschriebener Test.
+- Sperre auf der Kaufseite: Prüfung 6 hat sie bestätigt, `VORZEICHENWECHSEL_SPERRE` bleibt auf `'beide'`. Offen ist nur deine Entscheidung, ob TSMOM unter Live-Bedingungen bleibt (live ohne TSMOM +11,4 statt +10,2 % p.a.) oder in ein zweites Paper-Konto wandert. Dafür eine Sitzung mit dir und einen vorab festgeschriebenen Test.
 - BB-Stop nach MOC-Kauf im selben Symbol: Wegen Alpacas Wash-Trade-Schutz bleibt das Leg bis zum nächsten Lauf ohne Stop (Replay: 227 Leg-Tage, Wirkung ≈ 0). Lückenlos ginge es nur mit einem Stop-Nachlauf um ≈ 16:05 ET, also außerhalb deines Orderfensters (Regel 4). Deine Entscheidung, nicht gebaut.
 - Randfall: Ein BB-Long und ein TSMOM-Short im selben ETF mit netto Short-Bestand. Dann ist der GTC-Stop des BB-Legs bei Alpaca ein Leerverkaufs-Stop. Lehnt Alpaca ihn ab, gibt es eine Warnung im STATUS, und der Stop fehlt bis zum Ausstieg.
 - Review 1.7 (BB-Signal am Ex-Dividenden-Tag): beobachten, wenn SPY ex geht.
@@ -112,9 +112,8 @@ Neue Dateien: `kern.py`, `replay.py`, `requirements-replay.txt`, `assets.json`, 
 2. **Secrets:** github.com/linusaaronstiegler-boop/Trading-bot- → *Settings* → *Secrets and variables* → *Actions* → *New repository secret*: `APCA_API_KEY_ID`, dann `APCA_API_SECRET_KEY`. Ohne Leerzeichen und Zeilenumbruch einfügen (sonst bricht der Bot mit „Sonderzeichen“ ab).
 3. **Schreibrechte:** *Settings* → *Actions* → *General* → *Workflow permissions* → **Read and write permissions** → *Save*.
 4. **Mergen:** Repo-Startseite → gelber Balken „claude/systembuch-v2 had recent pushes“ → *Compare & pull request* → *Create pull request* → *Merge pull request* → *Confirm merge*. Erst danach laufen Schedules und *Run workflow* für `systembuch-bot`.
-5. **Paper-Prüfungen** (lokal, vor dem ersten Live-Lauf, Mo–Fr 21:30–21:49 MESZ):
+5. **Paper-Prüfungen:** erledigt am 16.10. (2, 4, 6; Ergebnis oben). Nur falls du sie mit neuen Schlüsseln wiederholen willst, lokal Mo–Fr 21:30–21:49 MESZ und vor dem ersten Live-Lauf:
    `APCA_API_KEY_ID=… APCA_API_SECRET_KEY=… python3 werkzeuge/paper_pruefungen.py --orders`
-   Das Ergebnis landet in `pruefungen-ergebnis.md`. Danach muss das Konto wieder flach sein (das Werkzeug räumt selbst auf). Alternativ kann ich das in einer neuen Sitzung zu der Uhrzeit machen.
 6. **Erster `dry`-Lauf:** *Actions* → *systembuch-bot* → *Run workflow* → Branch `main`, modus **dry** → *Run workflow*. Danach `STATUS-dry.md` im Repo öffnen: Signale, Netto-Orders, „Quelle:“ beim VIX (Prüfung 5), keine Warnungen. Der Lauf muss grün sein.
 7. **Scharf schalten:** Es gibt nichts umzuschalten. Nach dem Merge laufen die Schedules Mo–Fr von selbst (15:28/15:40 ET) und handeln im Fenster. **Wenn du erst nach den Prüfungen scharf willst:** *Actions* → *systembuch-bot* → *…* → *Disable workflow*, und nach den Prüfungen *Enable workflow*.
 8. **Benachrichtigung:** Oben rechts *Watch* → *Custom* → *Issues* anhaken. Jeder rote Lauf legt ein Issue an, und du bekommst eine Mail.

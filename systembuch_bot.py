@@ -39,8 +39,9 @@ START_SPAETESTENS_MIN = 11.5 # später gestartete Läufe handeln nicht mehr (Nac
 ORDER_SPAETESTENS_MIN = 10.5 # vor jeder Order Uhr prüfen; darunter keine Orders (MOC-Annahmeschluss 15:50 ET)
 ORDER_FRUEHESTENS_MIN = 30.0 # Linus' feste Regel 4: Orders nur 10–30 Min vor Schluss
 STORNO_WARTEN_S = 10         # Review 1.9: Storno ist asynchron – so lange auf `canceled` warten
-# Vorzeichenwechsel (Review 3.2): 'beide' = an einem Tag nie durch null (Standard). Zeigt Paper-Prüfung 6, dass Alpaca short → long mit zwei
-# Kauf-MOC-Orders (eindecken + neu kaufen) annimmt, kann hier 'verkauf' stehen: dann wird nur noch long → short gesperrt (Replay: ≈ +1,9 Punkte p.a.).
+# Vorzeichenwechsel (Review 3.2): 'beide' = an einem Tag nie durch null. Paper-Prüfungen 16.10.2026: long → short in einer Order und
+# short → long mit zwei Kauf-MOC-Orders lehnt Alpaca ab („insufficient qty available“) → 'beide' ist nötig. 'verkauf' (nur long → short
+# sperren) bleibt als Schalter für den Fall, dass Alpaca das Verhalten ändert (Replay: ≈ +1,9 Punkte p.a.).
 VORZEICHENWECHSEL_SPERRE = 'beide'
 ENDSTATUS = ('filled', 'canceled', 'expired', 'rejected', 'done_for_day', 'replaced')
 JOURNAL_SPALTEN = ['id', 'strategie', 'symbol', 'richtung', 'stueck', 'einstieg', 'einstieg_datum', 'ausstieg', 'ausstieg_datum', 'pnl', 'grund',
