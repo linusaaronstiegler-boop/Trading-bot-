@@ -133,4 +133,5 @@ Ohne Sperre +12,0 % p.a., mit Sperre nur long→short +12,1 %, mit Sperre in bei
 - SVXY handelbar ab 60 Handelstagen Historie (29.12.2011, Bedingung in `kern.kennzahlen`, live immer erfüllt). Das trifft K3 genau (80 VIX-Trades, 2012 +21 %); ab Auflage 04.10.2011 wären es 83 Trades, VIX-Beitrag 2,4 statt 2,8 Punkte (BEOBACHTUNGEN 2).
 - VIX-Contango entscheidet mit dem Yahoo-Schluss von ^VIX/^VIX3M (CBOE 16:15 ET), live um 15:45. Variante `vix_vortag` (Vortagesschluss) zeigt die pessimistische Schranke.
 - Fill = Schlusskurs. Die MOC-Abweichung misst der Live-Bot im Journal (`abweichung_bp`). K6 (Signal 15:45 statt Schluss) ist nicht enthalten: Erwartung IBS ≈ −0,4, IBS-Land ≈ −0,6 Punkte p.a. (README).
+- Stückzahl aus Yahoos `close` (nur split-bereinigt) wie K3: Bei UNG/USO war der echte Kurs 2010–2012 viel niedriger, der Replay rundet dort gröber als live (≤ 0,16 Punkte p.a., BEOBACHTUNGEN 5).
 - Keine Leihkosten, keine Zinsen (wie K3).

@@ -447,7 +447,8 @@ def equity_nachtragen(st, konto, positionen, kal, heute):
 
 
 def hwm_pruefen(st, reihe, eq):
-    """Review 2.5: Höchststand nie nur aus state.json – auch aus equity.csv und Alpaca-Historie (state.json verloren → kein Reset)."""
+    """Review 2.5: Höchststand nie nur aus state.json – auch aus equity.csv und Alpaca-Historie, beides ab Bot-Start.
+    Fehlt der Start (gelöschte state.json = Neustart), beginnt der Höchststand neu; dagegen schützt die Prüfung in lauf()."""
     kand = [st.get('hwm') or 0, eq] + reihe
     try:
         if st.get('start'):

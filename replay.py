@@ -581,6 +581,7 @@ def bericht(a, R, tresor, st, ko, jr, leih_quelle):
           'zeigt die pessimistische Schranke.',
           '- Fill = Schlusskurs. Die MOC-Abweichung misst der Live-Bot im Journal (`abweichung_bp`). K6 (Signal 15:45 statt Schluss) ist nicht enthalten: '
           'Erwartung IBS ≈ −0,4, IBS-Land ≈ −0,6 Punkte p.a. (README).',
+          '- Stückzahl aus Yahoos `close` (nur split-bereinigt) wie K3: Bei UNG/USO war der echte Kurs 2010–2012 viel niedriger, der Replay rundet dort gröber als live (≤ 0,16 Punkte p.a., BEOBACHTUNGEN 5).',
           '- Keine Leihkosten, keine Zinsen (wie K3).']
     open(os.path.join(a.ausgabe, 'BERICHT.md'), 'w').write('\n'.join(z) + '\n')
 
